@@ -1,0 +1,16 @@
+name: scale-1m
+description: Stretch benchmark. 1M simulated inference requests/s completed, simulated models given high limits.
+duration_s: 30
+warmup_s: 10
+drain_s: 15
+models:
+  model-a: {rpm: 40000000, tpm: 50000000000, latency_ms_median: 200, latency_sigma: 0.4}
+  model-b: {rpm: 40000000, tpm: 50000000000, latency_ms_median: 350, latency_sigma: 0.4}
+load:
+  rate_per_s: 1100000         # 10% above target
+  mix: {model-a: 0.5, model-b: 0.5}
+  token_size: 1000
+  token_jitter: 0.2
+engine:
+  queue_max: 60000000
+  queue_ttl_s: 30

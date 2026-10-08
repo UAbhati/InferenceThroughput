@@ -1,0 +1,10 @@
+# Default models. Limits can be changed at runtime through the admin API.
+models:
+  model-a:
+    rpm: 30000
+    tpm: 60000000
+    latency_ms_median: 300
+  model-b:
+    rpm: 20000
+    tpm: 40000000
+    latency_ms_median: 500

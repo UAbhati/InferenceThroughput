@@ -3,7 +3,7 @@ name = "interference-throughput"
 version = "0.1.0"
 description = "High-throughput inference gateway with RPM/TPM rate limiting, async batches, provider simulator and load generator"
 requires-python = ">=3.11"
-dependencies = ["fastapi", "uvicorn[standard]", "httpx", "numpy", "uvloop", "asyncpg", "pydantic>=2", "pyyaml"]
+dependencies = ["fastapi", "uvicorn[standard]", "httpx", "numpy", "uvloop", "asyncpg", "pydantic>=2", "pyyaml", "redis"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "ruff"]

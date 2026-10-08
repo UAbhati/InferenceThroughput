@@ -43,12 +43,12 @@ def pct(values: list[float], q: float) -> float:
 class Stack:
     """Provider simulator + gateway as subprocesses. The gateway can be killed and started again on its own."""
 
-    def __init__(self, scn: Scenario, out: Path):
+    def __init__(self, scn: Scenario, out: Path, gateway_port: int | None = None, provider_port: int | None = None):
         cfg = ModelsConfig(models=scn.models, engine=scn.engine, gateway=scn.gateway)
         self.out = out
         self.models_file = out / "models.yaml"
         self.models_file.write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
-        self.pp, self.gp = free_port(), free_port()
+        self.pp, self.gp = provider_port or free_port(), gateway_port or free_port()
         self.env = {**os.environ, "PROVIDER_MODELS": str(self.models_file), "GATEWAY_MODELS": str(self.models_file),
                     "PROVIDER_URL": f"http://127.0.0.1:{self.pp}", "GATEWAY_PUBLIC_URL": f"http://127.0.0.1:{self.gp}"}
         self.provider: subprocess.Popen | None = None

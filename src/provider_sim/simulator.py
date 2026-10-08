@@ -47,6 +47,12 @@ class ProviderSimulator:
         for m, s in models.items():
             self.audit.record_limits(m, clock(), s.rpm, s.tpm)
 
+    def set_behavior(self, model: str, **changes) -> ModelSpec:
+        """Change latency / failure rates while running (limits go through set_limits)."""
+        allowed = {"latency_ms_median", "latency_sigma", "transient_failure_rate", "permanent_failure_rate"}
+        self.specs[model] = self.specs[model].model_copy(update={k: v for k, v in changes.items() if k in allowed and v is not None})
+        return self.specs[model]
+
     def reset(self) -> None:
         """Fresh limiter windows, audit and counters; limits and behaviour are kept."""
         self._limiters = {m: SlidingWindowLimiter(s.rpm, s.tpm) for m, s in self.specs.items()}

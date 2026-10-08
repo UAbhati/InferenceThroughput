@@ -16,6 +16,22 @@ Results are in [reports/BENCHMARK.md](reports/BENCHMARK.md). Headline numbers (m
 | **1,000,000 simulated requests/s** (stretch) | **1,099,978 completed/s** |
 | 10 billion requests/minute (planning) | design only, see [BENCHMARK.md](reports/BENCHMARK.md#9-projection-10-billion-requests-per-minute-not-measured) |
 
+## Try it interactively (demo console + Swagger)
+One command starts the provider simulator and the gateway and opens a control page:
+
+```bash
+python -m loadgen.console            # http://127.0.0.1:8080   (add DATABASE_URL / REDIS_URL to include them)
+```
+
+- **Console** (`:8080`): live per-model throughput against the limit line, queue depths and counters; start/stop load and change the rate while it runs;
+  change a model's limits while running (with a "cut to 1/6" button); send a batch with a callback and make the receiver refuse its first N attempts;
+  inject provider failures; and, with Postgres on, kill the gateway with SIGKILL and restart it to watch the batch resume.
+- **Swagger** for the gateway (`http://127.0.0.1:8000/docs`) and the provider simulator (`http://127.0.0.1:8001/docs`), both linked from the console: every endpoint
+  below can be called from the browser. A ready-made batch example is prefilled under `POST /v1/batches`.
+
+The console is a separate process that talks to the services over HTTP; it is a way to drive and watch the system, not part of it. The automated runs
+(`python -m loadgen.run ...`) are what the benchmark report is based on.
+
 ## Contents
 1. [Setup](#setup) 2. [Run the pieces](#run-the-pieces) 3. [API](#api) 4. [Configure models and change limits](#configure-models-and-change-limits)
 5. [Durability and several replicas](#durability-and-several-replicas) 6. [Run the validation scenarios](#run-the-validation-scenarios)
@@ -28,7 +44,7 @@ Python 3.11+ (developed on 3.14). **No external services are needed** for the be
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,report,persistence]"   # report = matplotlib chart; persistence = asyncpg + redis clients (both optional)
-pytest -q                                    # 32 tests, ~70 s; the 8 persistence tests are skipped unless `docker compose up -d` is running
+pytest -q                                    # 33 tests, ~75 s; the 8 persistence tests are skipped unless `docker compose up -d` is running
 ```
 
 Everything runs on localhost; processes are started with `spawn`, so it behaves the same on macOS, Linux and Windows.
@@ -249,10 +265,10 @@ for callbacks (low rate) and in-process tests.
 src/common/       config + scenario schemas
 src/gateway/      limiter, queues, engine, HTTP service, batches/callbacks, persistence (Postgres), coordination (Redis)
 src/provider_sim/ provider simulator, HTTP app, independent usage audit, in-process backend
-src/loadgen/      scenario runner (HTTP and bulk), report builder, callback receiver, charts
+src/loadgen/      scenario runner (HTTP and bulk), report builder, callback receiver, charts, demo console (console.py + console.html)
 scenarios/        one YAML per scenario / benchmark
 docker-compose.yml  optional Postgres + Redis
 scripts/          run_all.sh
 reports/          BENCHMARK.md and the result files it cites
-tests/            32 tests (limiter, engine, service, callbacks, bulk, end-to-end, persistence/recovery/replicas)
+tests/            33 tests (limiter, engine, service, callbacks, bulk, end-to-end, persistence/recovery/replicas)
 ```

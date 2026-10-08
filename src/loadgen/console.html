@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inference gateway console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1b1f27; --muted: #667085; --line: #e3e6ec;
+    --blue: #2563eb; --orange: #ea7a1a; --green: #15803d; --red: #c0392b; --amber: #b7791f; --limit: #1b1f27;
+    --btn: #1b1f27; --btn-ink: #fff; --soft: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101318; --card: #181c23; --ink: #e8ebf0; --muted: #98a2b3; --line: #2a303a;
+            --blue: #6ea0ff; --orange: #f59e4b; --green: #4ade80; --red: #f87171; --amber: #fbbf24; --limit: #e8ebf0;
+            --btn: #e8ebf0; --btn-ink: #101318; --soft: #222833; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  header a { color: var(--blue); text-decoration: none; font-weight: 550; }
+  header a:hover { text-decoration: underline; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .chip { background: var(--soft); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+  .chip.on { color: var(--green); } .chip.bad { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); font-weight: 600; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+  .stack { display: grid; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 650; }
+  .card h2 b { color: var(--ink); }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input[type=number] { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+  .row { display: flex; gap: 8px; } .row > * { flex: 1; min-width: 0; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--soft); color: var(--ink); padding: 7px 12px; border-radius: 8px; font: inherit; font-weight: 550; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--btn); color: var(--btn-ink); border-color: var(--btn); }
+  button.danger { color: var(--red); } button:disabled { opacity: .45; cursor: not-allowed; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .model-name { font-weight: 650; margin-top: 12px; } .model-name:first-of-type { margin-top: 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .panel-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .panel-title h3 { margin: 0; font-size: 16px; }
+  .panel-title span { color: var(--muted); font-size: 13px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 8px 0 10px; }
+  .tile { background: var(--soft); border-radius: 8px; padding: 7px 10px; }
+  .tile .v { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; } .tile .k { font-size: 11px; color: var(--muted); }
+  canvas { width: 100%; height: 190px; display: block; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 4px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .bar { height: 8px; background: var(--soft); border-radius: 4px; overflow: hidden; min-width: 90px; }
+  .bar > div { height: 100%; background: var(--blue); }
+  .ok { color: var(--green); font-weight: 600; } .no { color: var(--red); font-weight: 600; } .wait { color: var(--amber); font-weight: 600; }
+  #log { max-height: 170px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+  #log div b { color: var(--ink); font-weight: 600; }
+  .banner { display: none; margin: 12px 20px 0; padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Inference gateway console</h1>
+  <a id="lnkGw" target="_blank" rel="noopener">Gateway Swagger &#8599;</a>
+  <a id="lnkPv" target="_blank" rel="noopener">Provider Swagger &#8599;</a>
+  <div class="chips" id="chips"></div>
+</header>
+<div class="banner" id="banner">The gateway is down. If Postgres is on, restart it and watch it pick the work back up.</div>
+<main>
+  <div class="stack">
+    <div class="card">
+      <h2><b>1</b> Load</h2>
+      <div class="row">
+        <div><label>Requests / second</label><input type="number" id="rate" value="1000" min="1" step="100"></div>
+        <div><label>Tokens / request</label><input type="number" id="tokens" value="1000" min="1" step="100"></div>
+      </div>
+      <div id="mixInputs"></div>
+      <div class="btns">
+        <button class="primary" id="btnStart">Start load</button>
+        <button id="btnStop">Stop</button>
+        <button id="btnReset" title="Clear statistics and records (only when idle)">Reset</button>
+      </div>
+      <div class="hint" id="loadInfo">Idle. Offered load above a model's limit queues, then expires or is rejected (429).</div>
+    </div>
+
+    <div class="card">
+      <h2><b>2</b> Limits <span style="text-transform:none;letter-spacing:0">(applies while running)</span></h2>
+      <div id="limitInputs"></div>
+      <div class="hint">Lowering a limit takes effect at once; the last 60 s of traffic still counts, so nothing new is sent for a while (the drain).</div>
+    </div>
+
+    <div class="card">
+      <h2><b>3</b> Batch + callback</h2>
+      <div class="row">
+        <div><label>Requests in batch</label><input type="number" id="batchSize" value="2000" min="1" step="500"></div>
+        <div><label>Refuse first N callbacks</label><input type="number" id="rejectN" value="2" min="0"></div>
+      </div>
+      <div class="btns"><button class="primary" id="btnBatch">Send batch</button></div>
+      <div class="hint">The batch is acknowledged at once. When every request is final the gateway calls this console back, retrying after refusals.</div>
+    </div>
+
+    <div class="card">
+      <h2><b>4</b> Break things</h2>
+      <div id="failInputs"></div>
+      <div class="btns">
+        <button class="danger" id="btnKill">Kill gateway (kill -9)</button>
+        <button id="btnRestart">Restart gateway</button>
+      </div>
+      <div class="hint" id="killHint"></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div id="panels" class="stack"></div>
+
+    <div class="card">
+      <h2>Batches</h2>
+      <table><thead><tr><th>Batch</th><th>Ack</th><th>Progress</th><th>Done</th><th>Failed</th><th>Status</th><th>Callback</th></tr></thead>
+      <tbody id="batches"><tr><td colspan="7" style="color:var(--muted)">No batches yet.</td></tr></tbody></table>
+      <h2 style="margin-top:14px">Callbacks received by this console</h2>
+      <table><thead><tr><th>Time</th><th>Batch</th><th>Answer</th><th>Total</th><th>Succeeded</th><th>Failed</th></tr></thead>
+      <tbody id="callbacks"><tr><td colspan="6" style="color:var(--muted)">None yet.</td></tr></tbody></table>
+      <div class="hint" id="cbHint"></div>
+    </div>
+
+    <div class="card"><h2>Events</h2><div id="log"></div></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n == null ? "-" : Math.round(n).toLocaleString();
+const hist = {};            // model -> {t:[], win:[], done:[], limit:[]}
+let last = null, models = [], built = false, lastBatchStates = {}, lastCbCount = 0, lastLimits = {};
+const MAXPTS = 150;
+
+async function api(method, path, body) {
+  const r = await fetch(path, {method, headers: {"content-type": "application/json"}, body: body ? JSON.stringify(body) : undefined});
+  const text = await r.text(); let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!r.ok) { log("<b>error</b> " + (data.detail || text)); throw new Error(text); }
+  return data;
+}
+function log(html) {
+  const d = document.createElement("div"); d.innerHTML = new Date().toLocaleTimeString() + "  " + html;
+  $("log").prepend(d); while ($("log").children.length > 80) $("log").lastChild.remove();
+}
+
+function build(st) {
+  models = Object.keys(st.limits); built = true;
+  $("lnkGw").href = st.links.gateway_docs; $("lnkPv").href = st.links.provider_docs;
+  $("mixInputs").innerHTML = models.map((m, i) => `<label>Share of traffic: ${m}</label><input type="number" id="mix_${m}" value="${i == 0 ? 60 : 40}" min="0" step="10">`).join("");
+  $("limitInputs").innerHTML = models.map(m => `
+    <div class="model-name">${m}</div>
+    <div class="row"><div><label>RPM</label><input type="number" id="rpm_${m}" step="1000"></div><div><label>TPM</label><input type="number" id="tpm_${m}" step="1000000"></div></div>
+    <div class="btns"><button class="primary" data-apply="${m}">Apply</button><button data-cut="${m}">Cut to 1/6</button><button data-restore="${m}">Restore original</button></div>`).join("");
+  $("failInputs").innerHTML = models.map(m => `
+    <div class="model-name">${m} provider failures</div>
+    <div class="row"><div><label>Transient % (retried)</label><input type="number" id="tr_${m}" min="0" max="100" step="5"></div>
+    <div><label>Permanent %</label><input type="number" id="pe_${m}" min="0" max="100" step="5"></div></div>
+    <div class="btns"><button data-fail="${m}">Apply</button></div>`).join("");
+  $("panels").innerHTML = models.map(m => `
+    <div class="card"><div class="panel-title"><h3>${m}</h3><span id="sub_${m}"></span></div>
+      <div class="tiles" id="tiles_${m}"></div>
+      <canvas id="cv_${m}"></canvas>
+      <div class="legend"><span><i style="background:var(--blue)"></i>sent to provider, last 60 s (RPM)</span>
+        <span><i style="background:var(--orange);opacity:.6"></i>completed per second &times; 60</span>
+        <span><i style="background:var(--limit)"></i>configured limit</span></div></div>`).join("");
+  models.forEach(m => { hist[m] = {t: [], win: [], done: [], limit: []}; lastLimits[m] = st.limits[m]; $("rpm_" + m).value = st.limits[m][0]; $("tpm_" + m).value = st.limits[m][1];
+    $("tr_" + m).value = Math.round(st.behavior[m].transient_failure_rate * 100); $("pe_" + m).value = Math.round(st.behavior[m].permanent_failure_rate * 100); });
+  const orig = JSON.parse(JSON.stringify(st.limits));
+  document.querySelectorAll("[data-apply]").forEach(b => b.onclick = () => setLimits(b.dataset.apply, +$("rpm_" + b.dataset.apply).value, +$("tpm_" + b.dataset.apply).value));
+  document.querySelectorAll("[data-cut]").forEach(b => b.onclick = () => { const m = b.dataset.cut; setLimits(m, Math.round(orig[m][0] / 6), Math.round(orig[m][1] / 6)); });
+  document.querySelectorAll("[data-restore]").forEach(b => b.onclick = () => { const m = b.dataset.restore; setLimits(m, orig[m][0], orig[m][1]); });
+  document.querySelectorAll("[data-fail]").forEach(b => b.onclick = async () => { const m = b.dataset.fail;
+    await api("PUT", "/api/provider/behavior", {model: m, transient_failure_rate: +$("tr_" + m).value / 100, permanent_failure_rate: +$("pe_" + m).value / 100});
+    log(`<b>${m}</b> provider failures: ${$("tr_" + m).value}% transient, ${$("pe_" + m).value}% permanent`); });
+}
+async function setLimits(m, rpm, tpm) {
+  await api("PUT", "/api/limits", {model: m, rpm, tpm});
+  $("rpm_" + m).value = rpm; $("tpm_" + m).value = tpm;
+  log(`<b>${m}</b> limits now ${fmt(rpm)} RPM / ${fmt(tpm)} TPM (gateway and provider)`);
+}
+function mixBody() { const mix = {}; models.forEach(m => mix[m] = +$("mix_" + m).value || 0); return mix; }
+
+$("btnStart").onclick = async () => { const v = await api("POST", "/api/load/start", {rate_per_s: +$("rate").value, token_size: +$("tokens").value, mix: mixBody()}); log(`<b>load</b> ${fmt(v.rate_per_s)} req/s`); };
+$("btnStop").onclick = async () => { await api("POST", "/api/load/stop"); log("<b>load</b> stopped"); };
+$("btnReset").onclick = async () => { await api("POST", "/api/reset"); models.forEach(m => hist[m] = {t: [], win: [], done: [], limit: []}); last = null; log("<b>reset</b> statistics cleared"); };
+$("btnBatch").onclick = async () => { const b = await api("POST", "/api/batch", {total: +$("batchSize").value, mix: mixBody(), token_size: +$("tokens").value, reject_first_callbacks: +$("rejectN").value});
+  log(`<b>batch</b> ${b.id.slice(0, 8)} accepted in ${b.ack_ms} ms`); };
+$("btnKill").onclick = async () => { await api("POST", "/api/gateway/kill"); log("<b>gateway killed</b> (SIGKILL, no shutdown, no final flush)"); };
+$("btnRestart").onclick = async () => { log("<b>gateway</b> restarting..."); await api("POST", "/api/gateway/restart"); log("<b>gateway</b> is back"); };
+
+function tile(k, v, cls = "") { return `<div class="tile"><div class="v ${cls}">${v}</div><div class="k">${k}</div></div>`; }
+
+function draw(m) {
+  const cv = $("cv_" + m), h = hist[m], dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const pad = {l: 52, r: 10, t: 8, b: 20};
+  const n = h.t.length; if (n < 2) { g.fillStyle = css("--muted"); g.fillText("waiting for data...", pad.l, H / 2); return; }
+  const ymax = Math.max(...h.limit, ...h.win, ...h.done) * 1.12 || 1;
+  const span = Math.max(n, 60) - 1;  // starts at the left and fills; after MAXPTS seconds it scrolls
+  const x0 = i => pad.l + (W - pad.l - pad.r) * i / span;
+  const Y = v => H - pad.b - (H - pad.t - pad.b) * (v / ymax);
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.font = "11px sans-serif"; g.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) { const v = ymax * k / 4, y = Y(v); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.fillText(fmt(v), 4, y + 4); }
+  g.fillText(n < 60 ? "0 s" : "last " + n + " s", pad.l, H - 5);
+  const line = (arr, color, width, dash, alpha) => { g.beginPath(); g.setLineDash(dash || []); g.globalAlpha = alpha || 1; g.strokeStyle = color; g.lineWidth = width;
+    arr.forEach((v, i) => i ? g.lineTo(x0(i), Y(v)) : g.moveTo(x0(i), Y(v))); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; };
+  line(h.done, css("--orange"), 1.5, null, .6); line(h.win, css("--blue"), 2.2); line(h.limit, css("--limit"), 1.6, [6, 4]);
+}
+
+function render(st) {
+  if (!built) build(st);
+  $("banner").style.display = st.gateway_up ? "none" : "block";
+  $("chips").innerHTML = [
+    `<span class="chip ${st.gateway_up ? "on" : "bad"}">gateway ${st.gateway_up ? "up" : "DOWN"}${st.replica ? " · " + st.replica : ""}</span>`,
+    `<span class="chip ${st.db ? "on" : ""}">Postgres ${st.db ? "on" : "off"}</span>`,
+    `<span class="chip ${st.redis ? "on" : ""}">Redis ${st.redis ? "on" : "off"}${st.replicas ? " · " + st.replicas.length + " replica(s)" : ""}</span>`].join("");
+  $("btnKill").disabled = !st.gateway_up; $("btnRestart").disabled = st.gateway_up;
+  $("killHint").textContent = st.db ? "With Postgres on, the restarted gateway adopts the unfinished batch and finishes it." : "Postgres is off: a killed gateway loses its queued work. Start with DATABASE_URL set to show recovery.";
+  const L = st.load;
+  $("loadInfo").textContent = L.running ? `Running: ${fmt(L.rate_per_s)} req/s offered · sent ${fmt(L.sent)} · accepted ${fmt(L.accepted)} · rejected (429) ${fmt(L.rejected_429)} · ack p50 ${L.ack_ms_p50 ?? "-"} ms`
+    : (L.sent ? `Stopped. Sent ${fmt(L.sent)}, accepted ${fmt(L.accepted)}, rejected (429) ${fmt(L.rejected_429)}.` : "Idle. Offered load above a model's limit queues, then expires or is rejected (429).");
+
+  if (st.gateway_up && st.models) {
+    const dt = last ? st.now - last.now : 0;
+    models.forEach(m => {
+      const s = st.models[m], t = s.totals, h = hist[m];
+      if (JSON.stringify(st.limits[m]) !== JSON.stringify(lastLimits[m])) { lastLimits[m] = st.limits[m]; }
+      const prev = last && last.models && last.models[m];
+      const doneRate = prev && dt > 0 ? Math.max((t.completed - prev.totals.completed) / dt, 0) : 0;
+      if (!prev) return;  // need two readings to compute a rate
+      h.t.push(st.now); h.win.push(s.window_usage.requests); h.done.push(doneRate * 60); h.limit.push(s.limits.rpm);
+      while (h.t.length > MAXPTS) { h.t.shift(); h.win.shift(); h.done.shift(); h.limit.shift(); }
+      $("sub_" + m).textContent = `limit ${fmt(s.limits.rpm)} RPM / ${fmt(s.limits.tpm)} TPM · provider saw at most ${fmt(s.provider?.max_rpm_60s)} in any 60 s`;
+      $("tiles_" + m).innerHTML = tile("completed / s", fmt(doneRate)) + tile("queued", fmt(s.queued)) + tile("in flight", fmt(s.in_flight)) +
+        tile("completed", fmt(t.completed)) + tile("failed", fmt(t.failed), t.failed ? "no" : "") + tile("expired", fmt(t.expired), t.expired ? "wait" : "") +
+        tile("rejected 429", fmt(t.rejected), t.rejected ? "wait" : "") + tile("retried", fmt(t.retried)) +
+        tile("provider 429s", fmt(s.provider?.counts?.rate_limited), s.provider?.counts?.rate_limited ? "no" : "ok");
+      draw(m);
+    });
+  }
+  last = st;
+
+  const rows = (st.batches || []).slice().reverse().map(b => {
+    const done = b.total ? (b.succeeded + b.failed) : 0, pct = b.total ? 100 * done / b.total : 0, cb = b.callback || {};
+    const cbTxt = cb.status === "delivered" ? `<span class="ok">delivered (${cb.attempts} attempt${cb.attempts > 1 ? "s" : ""})</span>`
+      : cb.status === "retrying" ? `<span class="wait">retrying · attempt ${cb.attempts}</span>` : cb.status === "failed" ? `<span class="no">gave up</span>` : `<span style="color:var(--muted)">${cb.status || "-"}</span>`;
+    return `<tr><td>${b.id.slice(0, 8)}</td><td>${b.ack_ms} ms</td><td><div class="bar"><div style="width:${pct}%"></div></div></td><td>${fmt(done)} / ${fmt(b.total)}</td>
+      <td>${fmt(b.failed)}</td><td>${b.status || "-"}</td><td>${cbTxt}</td></tr>`; });
+  $("batches").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="7" style="color:var(--muted)">No batches yet.</td></tr>`;
+  (st.batches || []).forEach(b => { const prev = lastBatchStates[b.id]; if (prev && prev !== b.status && b.status !== "processing") log(`<b>batch ${b.id.slice(0, 8)}</b> all requests final: ${b.succeeded} succeeded, ${b.failed} failed`); lastBatchStates[b.id] = b.status; });
+  const cbs = (st.callbacks || []).slice().reverse();
+  $("callbacks").innerHTML = cbs.length ? cbs.map(c => `<tr><td>${new Date(c.t * 1000).toLocaleTimeString()}</td><td>${(c.batch_id || "").slice(0, 8)}</td>
+    <td class="${c.status_code === 200 ? "ok" : "no"}">${c.status_code === 200 ? "200 accepted" : c.status_code + " refused"}</td><td>${fmt(c.total)}</td><td>${fmt(c.succeeded)}</td><td>${fmt(c.failed)}</td></tr>`).join("")
+    : `<tr><td colspan="6" style="color:var(--muted)">None yet.</td></tr>`;
+  if ((st.callbacks || []).length > lastCbCount) { const c = st.callbacks[st.callbacks.length - 1]; log(`<b>callback</b> for ${(c.batch_id || "").slice(0, 8)} ${c.status_code === 200 ? "accepted" : "refused (" + c.status_code + ")"}`); }
+  lastCbCount = (st.callbacks || []).length;
+  $("cbHint").textContent = st.callback_rejects_pending ? `The next ${st.callback_rejects_pending} callback attempt(s) will be refused.` : "";
+}
+
+async function tick() {
+  try { render(await (await fetch("/api/state")).json()); } catch (e) { $("banner").style.display = "block"; $("banner").textContent = "Lost contact with the console process."; }
+  setTimeout(tick, 1000);
+}
+tick();
+window.addEventListener("resize", () => { if (last && last.models) models.forEach(draw); });
+</script>
+</body>
+</html>

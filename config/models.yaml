@@ -1,10 +1,18 @@
-# Default models. Limits can be changed at runtime through the admin API.
+# Default models, used by the demo console and by `uvicorn gateway.app:app` / `uvicorn provider_sim.app:app`.
+# Limits can be changed at runtime through the admin API (or the console).
 models:
   model-a:
     rpm: 30000
     tpm: 60000000
     latency_ms_median: 300
+    latency_sigma: 0.4
   model-b:
     rpm: 20000
     tpm: 40000000
     latency_ms_median: 500
+    latency_sigma: 0.4
+engine:
+  queue_max: 20000
+  queue_ttl_s: 30
+  max_attempts: 3
+  headroom: 0.98

@@ -10,23 +10,25 @@ Results are in [reports/BENCHMARK.md](reports/BENCHMARK.md). Headline numbers (m
 |---|---|
 | 50,000 RPM / 100M TPM provider capacity | 97.8% of the RPM limit completed over a 5-minute steady state; no 60s window above the limit |
 | Different models + changing limits | limits cut and restored at runtime with no restart; each model stayed within its current limit |
-| Async batch + callback | 10,000 requests acknowledged in 26 ms, callback delivered after two rejections, every id exactly once |
+| Async batch + callback | 10,000 requests acknowledged in 26 ms (188 ms when saved durably first), callback delivered after two rejections, every id exactly once |
+| Crash recovery (optional, needs Postgres) | gateway killed with `kill -9` mid-batch; the restarted gateway finished it, delivered the callback once, no request lost or duplicated |
 | **300,000 simulated requests/s** (required) | **329,947 completed/s** |
 | **1,000,000 simulated requests/s** (stretch) | **1,099,978 completed/s** |
-| 10 billion requests/minute (planning) | design only, see [BENCHMARK.md](reports/BENCHMARK.md#projection-10-billion-requests-per-minute-not-measured) |
+| 10 billion requests/minute (planning) | design only, see [BENCHMARK.md](reports/BENCHMARK.md#9-projection-10-billion-requests-per-minute-not-measured) |
 
 ## Contents
 1. [Setup](#setup) 2. [Run the pieces](#run-the-pieces) 3. [API](#api) 4. [Configure models and change limits](#configure-models-and-change-limits)
-5. [Run the validation scenarios](#run-the-validation-scenarios) 6. [Design](#design-decisions-and-tradeoffs)
-7. [Simulation assumptions](#simulation-assumptions) 8. [Known gaps](#known-gaps)
+5. [Durability and several replicas](#durability-and-several-replicas) 6. [Run the validation scenarios](#run-the-validation-scenarios)
+7. [Design](#design-decisions-and-tradeoffs) 8. [Simulation assumptions](#simulation-assumptions) 9. [Known gaps](#known-gaps)
 
 ## Setup
-Python 3.11+ (developed on 3.14). No external services are needed.
+Python 3.11+ (developed on 3.14). **No external services are needed** for the benchmarks and Scenarios 1-3; Postgres and Redis are optional
+(see [Durability and several replicas](#durability-and-several-replicas)).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,report]"      # "report" adds matplotlib for the limits-over-time chart (optional)
-pytest -q                           # 24 tests, ~40 s
+pip install -e ".[dev,report,persistence]"   # report = matplotlib chart; persistence = asyncpg + redis clients (both optional)
+pytest -q                                    # 32 tests, ~70 s; the 8 persistence tests are skipped unless `docker compose up -d` is running
 ```
 
 Everything runs on localhost; processes are started with `spawn`, so it behaves the same on macOS, Linux and Windows.
@@ -69,6 +71,10 @@ Gateway (`uvicorn gateway.app:app`):
 | `GET /v1/batches/{id}/results?offset=&limit=` | Per-request results, paged, in submission order. |
 | `PUT /admin/models/{model}/limits` `{rpm?, tpm?}` | Change limits while running. |
 | `GET /admin/models`, `/admin/status`, `/admin/stats` | Limits, queue depths, window usage, per-second statistics. |
+
+With `DATABASE_URL` set, reads fall back to Postgres for anything not in memory (finished work after a restart, work owned by another replica),
+and `POST /v1/requests` with a client-supplied `request_id` is idempotent across restarts. A batch that cannot be saved is refused with `503`
+and nothing is accepted.
 
 **Callback** (`POST callback_url`, sent once every request in the batch is final): `{event, batch_id, status, total, succeeded,
 failed, expired, completed_at, results_url, results?}`. `failed` includes `expired`. Results are inlined for batches of up to
@@ -115,6 +121,35 @@ curl -X PUT localhost:8001/admin/models/model-a/limits -H 'content-type: applica
 Raise the provider first and lower the gateway first, so the gateway never exceeds what the provider accepts.)
 Scenario files can schedule changes with `changes: [{at_s, model, rpm, tpm}]`.
 
+## Durability and several replicas
+Both are optional and independent. Start the backing services and point the gateway at them (copy `.env.example`):
+
+```bash
+docker compose up -d                      # Postgres on :55432, Redis on :56379 (throwaway data)
+export DATABASE_URL=postgresql://inference:inference@127.0.0.1:55432/inference
+export REDIS_URL=redis://127.0.0.1:56379/0
+uvicorn gateway.app:app --port 8000       # a second replica: the same command with --port 8002
+```
+
+**With `DATABASE_URL` (Postgres):**
+- A batch and all its requests are saved **before the 202**, so an acknowledged batch survives a crash. Single requests and every state change are
+  written behind in groups (default every 100 ms, one statement per table), off the request path.
+- Current model limits are stored, so a runtime limit change survives a restart.
+- **Recovery:** on start, and every 2 s when Redis is used, a replica adopts the unfinished work of replicas that are no longer alive: open requests
+  are queued again, batches resume where they stopped, callbacks that were not delivered are sent. Work claimed this way is claimed atomically, so two
+  replicas never adopt the same batch. Requests that were in flight at the crash run again, so delivery to the provider is **at-least-once**.
+- Finished requests and batches stay readable after a restart.
+
+**With `REDIS_URL`:** several gateway replicas can run side by side (put any load balancer in front).
+- Every replica heartbeats; each model's limit is **split evenly across the live replicas**, so their combined usage cannot exceed the limit.
+- A limit changed through any replica is stored once and pushed to all of them.
+- A replica that joins waits 2.5 s before dispatching so the existing replicas can shrink their share first; a replica that leaves or dies
+  hands its share back within a few seconds.
+- Heartbeats also tell the survivors which replica died, so they know whose work to adopt.
+
+Without `REDIS_URL` a gateway is a single replica and treats every other owner found in the database as dead, so run only one gateway per database in that mode.
+Neither service is on the 300k / 1M per second benchmark path: that path is in memory by design.
+
 ## Run the validation scenarios
 Each command starts the provider and gateway, drives load, applies any limit changes, then writes
 `runs/<name>-<timestamp>/{report.md,report.json}` (plus a chart for Scenario 2) and **exits non-zero if a pass criterion fails**.
@@ -124,10 +159,12 @@ Each command starts the provider and gateway, drives load, applies any limit cha
 | 1. Reach provider capacity | `python -m loadgen.run scenarios/s1_capacity.yaml` | ~7 min | ≥90% of allowed capacity completed after warm-up; no 60s window above either limit; every request accounted for |
 | 2. Models and changing limits | `python -m loadgen.run scenarios/s2_changing_limits.yaml` | ~6 min | each model within its current limit; Model A follows both changes; Model B unaffected; report shows limits and throughput over time |
 | 3. Async batch completion | `python -m loadgen.run scenarios/s3_batch_callback.yaml` | ~1 min | ack < 1 s; callback only after all final; delivered after the destination recovers; summary equals API; each id exactly once |
+| 4. Crash recovery (needs `DATABASE_URL`) | `python -m loadgen.run scenarios/s4_crash_recovery.yaml` | ~1 min | gateway killed with SIGKILL at 30% of a 10,000-request batch; the restarted gateway finishes it; callback delivered once; every id exactly once, none lost |
 | Required scale benchmark | `python -m loadgen.run scenarios/scale_300k.yaml` | ~1 min | see report |
 | Stretch scale benchmark | `python -m loadgen.run scenarios/scale_1m.yaml` | ~1 min | see report |
 
-`scripts/run_all.sh` runs the tests plus all of the above (`scripts/run_all.sh quick` skips Scenarios 1 and 2).
+`scripts/run_all.sh` runs the tests plus all of the above (`scripts/run_all.sh quick` skips Scenarios 1 and 2); it includes Scenario 4 when `DATABASE_URL` is set.
+Scenarios 1-3 also run with `DATABASE_URL` and `REDIS_URL` set, exercising the durable path end to end.
 Edit a scenario file to choose the request rate, duration, model mix, batch size (`load.batch_size`) and token size (`load.token_size`, `token_jitter`).
 
 How the numbers are measured: latency and request states come from the gateway's own records; rate-limit compliance comes from
@@ -165,6 +202,16 @@ them (about half a TTL's worth of capacity), so they do not expire while waiting
 use the queue. The callback is sent after the last item is final and retried with backoff; delivery is at-least-once with an
 idempotency key.
 
+**Durability, and what is deliberately not durable.** The promise is: *an acknowledged batch is never lost*. Batches are saved before the ack. A single
+request is acknowledged before it is written, so one accepted in the last ~100 ms before a crash can be lost; making it durable first would put a database
+round trip on every request. Per-attempt transitions and rejected requests are not stored (a rejected request was answered with 429). Recovery re-runs
+requests that were in flight, which is why delivery is at-least-once; the idempotency key on the callback lets receivers de-duplicate.
+
+**Replicas split limits instead of sharing a counter.** Each replica enforces its share locally with the same sliding-window limiter, so there is no
+shared-state round trip per request and the limit is respected by construction. The cost: a replica cannot use an idle neighbour's share, and a
+crashed replica's share is unused for a few seconds until its heartbeat expires. A restarted replica's limiter window starts empty (usage is not persisted);
+the provider's own 429s, which the gateway re-queues without using an attempt, are the backstop for that first minute.
+
 **Bulk sharding.** Each of N worker processes owns 1/N of every model's limits and 1/N of the offered load. This is exact and has
 no coordination on the hot path; the price is that a shard cannot borrow an idle neighbour's share (fine for symmetric load,
 see the 10B plan for the real answer).
@@ -189,21 +236,23 @@ for callbacks (low rate) and in-process tests.
 - Token counts are the `estimated_tokens` supplied by the client; there is no separate token estimator.
 
 ## Known gaps
-- **State is in memory.** A gateway restart loses queued work, batches and pending callbacks. The planned fix is a durable store
-  (Postgres for batches and results, written off the hot path) and shared limits for multiple gateway replicas; it is not built.
-- One gateway process; records are never evicted (fine for the benchmark durations).
+- Single requests are acknowledged before they are written (up to ~100 ms of exposure); only batches are durable at the ack. Rejected requests and per-attempt transitions are not stored.
+- A restarted replica starts with an empty limiter window; the provider's 429s protect the provider during that first minute (the gateway re-queues them without using an attempt).
+- If Redis is down the replicas keep the last known membership and cannot receive limit changes pushed through it; if Postgres is down writes queue in memory and are retried (batches are refused with 503).
+- Records are never evicted from memory (fine for the benchmark durations); with Postgres, memory could be trimmed to open work only.
 - Scale numbers are from one machine; the true ceiling was not found because the shards kept up with the offered load.
-- In Scenarios 1 and 2 the offered load exceeds capacity by design, so latency is mostly queue wait and many requests are
-  rejected or expire; that is the specified over-capacity behaviour, not a defect.
+- In Scenarios 1 and 2 the offered load exceeds capacity by design, so latency is mostly queue wait and many requests are rejected or expire; that is the specified over-capacity behaviour, not a defect.
+- The 300k / 1M per second benchmark runs entirely in memory; durability costs are measured separately (see the benchmark report).
 
 ## Layout
 ```
 src/common/       config + scenario schemas
-src/gateway/      limiter, queues, engine, HTTP service, batches/callbacks
+src/gateway/      limiter, queues, engine, HTTP service, batches/callbacks, persistence (Postgres), coordination (Redis)
 src/provider_sim/ provider simulator, HTTP app, independent usage audit, in-process backend
 src/loadgen/      scenario runner (HTTP and bulk), report builder, callback receiver, charts
 scenarios/        one YAML per scenario / benchmark
+docker-compose.yml  optional Postgres + Redis
 scripts/          run_all.sh
 reports/          BENCHMARK.md and the result files it cites
-tests/            24 tests (limiter, engine, service, callbacks, bulk, end-to-end)
+tests/            32 tests (limiter, engine, service, callbacks, bulk, end-to-end, persistence/recovery/replicas)
 ```

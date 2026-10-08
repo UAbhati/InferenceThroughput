@@ -1,6 +1,6 @@
 # Benchmark report
 
-Everything in sections 1-6 is **measured** by the scripts in this repository. Section 7 is a **projection**, kept separate on purpose.
+Everything in sections 1-8 is **measured** by the scripts in this repository. Section 9 is a **projection**, kept separate on purpose.
 Raw per-run reports (markdown, and JSON with per-second timelines) are in [`reports/results/`](results/).
 
 ## 1. Summary
@@ -10,9 +10,10 @@ Raw per-run reports (markdown, and JSON with per-second timelines) are in [`repo
 | S1 | Reach 50k RPM / 100M TPM | ≥90% of allowed capacity after warm-up; no 60 s window over a limit; every request accounted for | **97.8%** of RPM over 300 s steady state; worst 60 s window **98.0%** of the limit; 395,996 sent, all accounted for | pass |
 | S2 | Different models, changing limits | each model within current limits; A follows both changes; B unaffected; report over time | A: 29,361 → 4,905 → 29,388 completed/min against limits 30,000 → 5,000 → 30,000; B at 97.8% throughout; no window over its limit | pass |
 | S3 | Async batch completion | ack < 1 s; callback after all final; delivered after recovery; summary = API; ids exactly once | ack **26 ms**; callback after all 10,000 final; attempts 503, 503, 200; summary identical to API; 10,000 distinct ids | pass |
+| S4 | Crash recovery (optional, Postgres) | batch finishes after `kill -9`; callback once; every id once; none lost | killed at 3,033 of 10,000 final; restarted gateway finished the batch in 11.1 s, callback delivered once, 10,000 distinct ids | pass |
 | Required | 300,000 simulated req/s | complete 300k/s | **329,947 completed/s** (offered 330,000) | pass |
 | Stretch | 1,000,000 simulated req/s | complete 1M/s | **1,099,978 completed/s** (offered 1,100,000) | pass |
-| Planning | 10B req/min | explain the extension | section 7 | design only |
+| Planning | 10B req/min | explain the extension | section 9 | design only |
 
 ## 2. Test environment and method
 
@@ -115,7 +116,44 @@ One batch of 10,000 requests, 60% Model A / 40% Model B, 1,000 tokens each. Simu
 
 Files: [s3-batch-callback.md](results/s3-batch-callback.md), [s3-batch-callback.json](results/s3-batch-callback.json).
 
-## 7. Bottlenecks and what was found
+## 7. Durability, recovery and replicas (Postgres + Redis)
+
+Everything above ran in memory. This section covers the optional durable mode (`DATABASE_URL`, `REDIS_URL`; see the README). Scenarios 1-3 were also run with both services on, one gateway process.
+
+**Scenario 4: crash in the middle of a batch.** A 10,000-request batch with a callback is acknowledged; when 3,033 requests are final the gateway process is killed with `SIGKILL`
+(no shutdown hooks, no final flush); the process stays dead for 1 s and a new gateway is started on the same database.
+
+| Check | Result |
+|---|---|
+| Acknowledgement (rows saved before the 202) | 191 ms |
+| Batch after the restart | `completed_with_failures`: 9,756 succeeded, 244 failed (permanent failures and exhausted retries), 0 lost |
+| Callback | delivered once, 11.0 s after the restart, summary identical to `GET /v1/batches/{id}` |
+| Request ids in the final result | 10,000 rows, 10,000 distinct ids, equal to the submitted set |
+| Provider calls in total | 11,514 (10,000 requests plus retries and the re-run of requests that were in flight at the crash); 0 provider 429s |
+| Any 60 s window above a limit | no (provider audit across the whole run, including before and after the crash) |
+
+Files: [s4-crash-recovery.md](results/s4-crash-recovery.md), [s4-crash-recovery.json](results/s4-crash-recovery.json).
+
+**What persistence costs** (one gateway, the same machine):
+
+| Measure | In memory | Postgres + Redis |
+|---|---|---|
+| S3 acknowledgement of 10,000 requests | 26 ms | 188 ms (rows are saved before the 202) |
+| S3 time until all requests are final | 15.5 s | 17.7 s (the 2.5 s is the replica join delay, below) |
+| Single-request ack latency p50 / p99 (S1 load, 1,100 req/s, 70 s) | 0.8 ms / 2.2 ms | 2.3 ms / 6.6 ms (an idempotency lookup per client-supplied id) |
+| Steady-state completions, same run | 815/s = 97.8% of the limit | 815/s = 97.9% of the limit |
+| Rejected in that 70 s run | 0 | 1,687 (the queue filled during the 2.5 s the replica waited to start dispatching) |
+
+Throughput at the limit is unchanged because the database work is off the dispatch path; the costs are at the edges (acknowledgement, startup). The 70 s runs are short checks
+([persistence-overhead-on.md](results/persistence-overhead-on.md), [persistence-overhead-off.md](results/persistence-overhead-off.md)), not repeats of the 6-minute S1.
+
+**Correctness tests with real Postgres and Redis** (`tests/test_persistence.py`, 8 tests): a batch is in the database before it is acknowledged; a crash mid-batch is recovered with every id exactly once and the
+callback delivered once; finished work and idempotency survive a restart; open single requests survive a crash; runtime limit changes survive a restart; two replicas split a limit, share changes through Redis and hand the
+share back when one leaves; **two replicas together never made the provider push back** (0 provider 429s, audit within the limit); a survivor adopts the batch of a replica that died.
+
+**Not measured:** throughput of several replicas at scale, behaviour with Postgres or Redis unavailable, and database size growth over long runs.
+
+## 8. Bottlenecks and what was found
 
 **Found and fixed during development**
 1. *httpx connection pool.* With a few thousand concurrent provider calls, httpx's pool did work proportional to connections × waiting requests on every call (48M `is_idle` calls in a 25 s profile) and stalled the
@@ -129,9 +167,9 @@ Files: [s3-batch-callback.md](results/s3-batch-callback.md), [s3-batch-callback.
   ([http-ceiling-probe.md](results/http-ceiling-probe.md)). That is about 7× what S1-S3 need. It is a *floor*, not a ceiling: the load generator or the gateway may have been the limit and this was not investigated further.
 - **Bulk path:** about 92k requests/s per worker process was sustained without saturating (a stripped micro-benchmark of just the limiter and simulator reached about 1.2M/s per process). Scaling is by processes, one per core.
 - **S1/S2 latency** is queue wait by construction, bounded by the TTL.
-- **No durability.** State is in memory; the throughput numbers do not include any storage cost.
+- **Durability is optional.** The scale benchmarks and S1-S3 results in sections 3-6 are in-memory; section 7 gives the measured cost of the durable mode.
 
-## 8. Projection: 10 billion requests per minute (not measured)
+## 9. Projection: 10 billion requests per minute (not measured)
 
 10 billion per minute is about **167 million requests/s**, about 150× the stretch benchmark. Nothing below was measured; it is arithmetic from the measurements above plus design reasoning.
 
@@ -148,6 +186,7 @@ over a persistent protocol; single-request calls remain for low-rate traffic.
    first and waits for the drain, exactly as the single-process system does.
 3. **Durability without a per-request database write.** Persist batch metadata and outcomes in a partitioned, append-only log; keep per-request state in memory and recover from the log; store results columnar/object storage with a retention period.
    At 167M/s even 100 bytes per request is 16 GB/s, so per-request rows in a relational database are out; Postgres holds batches, quotas and configuration only.
+   The mode built here (write-behind rows, claim-based recovery) is the same idea at about 1,000 requests/s per gateway, not at that scale.
 4. **Backpressure.** Per-cell bounded queues with TTL (as now) plus admission control at the edge using the cells' queue depth and lease headroom, so overload shows up as fast 429s rather than latency.
 5. **Callbacks** from a separate delivery service reading batch-completion events: retries with backoff and jitter, per-destination rate limits and circuit breakers, idempotency keys (already in this design).
 6. **Providers.** 10B requests/min implies provider capacity far beyond the 50k RPM / 100M TPM used here (at 1,000 tokens per request, about 10 trillion tokens/min), i.e. many provider accounts and regions; the router must weigh models, accounts, regional
@@ -156,13 +195,15 @@ over a persistent protocol; single-request calls remain for low-rate traffic.
 
 **Risks to validate first:** per-core throughput of the real (networked) provider path, which is lower than the in-process simulation; lease epoch length against burstiness; memory per in-flight request; callback fan-out at batch completion.
 
-## 9. Reproducing
+## 10. Reproducing
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev,report]"
 scripts/run_all.sh            # tests + all benchmarks and scenarios, about 25 minutes
 scripts/run_all.sh quick      # skips S1 and S2, about 4 minutes
-python -m loadgen.run scenarios/probe_http_ceiling.yaml     # the HTTP ceiling probe from section 7
+docker compose up -d && export DATABASE_URL=postgresql://inference:inference@127.0.0.1:55432/inference REDIS_URL=redis://127.0.0.1:56379/0
+python -m loadgen.run scenarios/s4_crash_recovery.yaml     # crash recovery (section 7); also the 8 persistence tests in pytest
+python -m loadgen.run scenarios/probe_http_ceiling.yaml     # the HTTP ceiling probe from section 8
 ```
 
 Each run writes `runs/<name>-<timestamp>/` (git-ignored) with `report.md`, `report.json`, service logs and, for limit changes, a chart; the files in `reports/results/` are copies of the runs cited above.

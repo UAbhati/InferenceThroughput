@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reproduce every result. Usage: scripts/run_all.sh [quick]
-#   full  (~25 min): tests, both scale benchmarks, scenarios 1-3
+#   full  (~25 min): tests, both scale benchmarks, scenarios 1-3 (and 4 when DATABASE_URL is set)
 #   quick (~4 min) : tests, both scale benchmarks, scenario 3
 # Needs the virtualenv from the README to be active (or set PYTHON=/path/to/python).
 set -euo pipefail
@@ -11,6 +11,11 @@ echo "== tests";                      "$PY" -m pytest -q
 echo "== required: 300k req/s";       "$PY" -m loadgen.run scenarios/scale_300k.yaml
 echo "== stretch: 1M req/s";          "$PY" -m loadgen.run scenarios/scale_1m.yaml
 echo "== scenario 3: batch+callback"; "$PY" -m loadgen.run scenarios/s3_batch_callback.yaml
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "== scenario 4: crash recovery (Postgres)"; "$PY" -m loadgen.run scenarios/s4_crash_recovery.yaml
+else
+  echo "== scenario 4 skipped: set DATABASE_URL (docker compose up -d, see .env.example) to run it"
+fi
 if [ "${1:-full}" != "quick" ]; then
   echo "== scenario 1: provider capacity (6 min)"; "$PY" -m loadgen.run scenarios/s1_capacity.yaml
   echo "== scenario 2: changing limits (5 min)";   "$PY" -m loadgen.run scenarios/s2_changing_limits.yaml

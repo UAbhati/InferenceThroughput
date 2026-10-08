@@ -1,0 +1,232 @@
+{
+ "scenario": "s4-crash-recovery",
+ "description": "Durability check (needs Postgres, see README). A batch of 10,000 requests with a callback is accepted; once 30% of it is final the gateway process is killed with SIGKILL, then started again. The new gateway must finish the batch, deliver the callback once, and report every request id exactly once.\n",
+ "mode": "http (gateway killed with SIGKILL mid-batch and restarted; Postgres)",
+ "environment": {
+  "python": "3.14.7",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "cpu_count": 12,
+  "shards": 1,
+  "wall_s": 17.2
+ },
+ "config": {
+  "duration_s": 180.0,
+  "warmup_s": 0.0,
+  "offered_rate_per_s": null,
+  "mix": null,
+  "token_size": null,
+  "engine": {
+   "queue_max": 100000,
+   "queue_ttl_s": 60.0,
+   "max_attempts": 3,
+   "headroom": 0.98,
+   "tick_s": 0.005,
+   "burst_s": 0.25
+  },
+  "models": {
+   "model-a": {
+    "rpm": 30000,
+    "tpm": 60000000,
+    "latency_ms_median": 300.0,
+    "latency_sigma": 0.4,
+    "transient_failure_rate": 0.1,
+    "permanent_failure_rate": 0.02
+   },
+   "model-b": {
+    "rpm": 20000,
+    "tpm": 40000000,
+    "latency_ms_median": 500.0,
+    "latency_sigma": 0.4,
+    "transient_failure_rate": 0.1,
+    "permanent_failure_rate": 0.02
+   }
+  }
+ },
+ "limit_changes": [],
+ "models": {
+  "model-a": {
+   "configured": {
+    "rpm": 30000,
+    "tpm": 60000000
+   },
+   "totals": {
+    "submitted": 0,
+    "rejected": 0,
+    "completed": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "expired": 0,
+    "retried": 0,
+    "completed_tokens": 0,
+    "waiting_at_end": 0,
+    "in_flight_at_end": 0,
+    "unaccounted": 0
+   },
+   "steady_state": {
+    "window_s": [
+     0,
+     180
+    ],
+    "completed": 0,
+    "observed_rpm": 0,
+    "observed_tpm": 0,
+    "rpm_utilisation": 0.0,
+    "tpm_utilisation": 0.0
+   },
+   "latency_s": {
+    "p50": NaN,
+    "p95": NaN,
+    "p99": NaN
+   },
+   "limit_audit": {
+    "rpm": {
+     "max_window": 6958,
+     "worst_ratio": 0.23193333333333332,
+     "worst_at_s": 16.3,
+     "ok": true
+    },
+    "tpm": {
+     "max_window": 6958000,
+     "worst_ratio": 0.11596666666666666,
+     "worst_at_s": 16.3,
+     "ok": true
+    }
+   },
+   "timeline": [
+    {
+     "t": 1,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 518
+    }
+   ]
+  },
+  "model-b": {
+   "configured": {
+    "rpm": 20000,
+    "tpm": 40000000
+   },
+   "totals": {
+    "submitted": 0,
+    "rejected": 0,
+    "completed": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "expired": 0,
+    "retried": 0,
+    "completed_tokens": 0,
+    "waiting_at_end": 0,
+    "in_flight_at_end": 0,
+    "unaccounted": 0
+   },
+   "steady_state": {
+    "window_s": [
+     0,
+     180
+    ],
+    "completed": 0,
+    "observed_rpm": 0,
+    "observed_tpm": 0,
+    "rpm_utilisation": 0.0,
+    "tpm_utilisation": 0.0
+   },
+   "latency_s": {
+    "p50": NaN,
+    "p95": NaN,
+    "p99": NaN
+   },
+   "limit_audit": {
+    "rpm": {
+     "max_window": 4556,
+     "worst_ratio": 0.2278,
+     "worst_at_s": 15.81,
+     "ok": true
+    },
+    "tpm": {
+     "max_window": 4556000,
+     "worst_ratio": 0.1139,
+     "worst_at_s": 15.81,
+     "ok": true
+    }
+   },
+   "timeline": [
+    {
+     "t": 1,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 345
+    }
+   ]
+  }
+ },
+ "overall": {
+  "totals": {
+   "submitted": 0,
+   "rejected": 0,
+   "completed": 0,
+   "succeeded": 0,
+   "failed": 0,
+   "expired": 0,
+   "retried": 0,
+   "completed_tokens": 0
+  },
+  "steady_completed_per_s": 0,
+  "latency_s": {
+   "p50": NaN,
+   "p95": NaN,
+   "p99": NaN
+  },
+  "all_requests_accounted": true,
+  "all_limits_respected": true,
+  "note": "gateway statistics are not collected across the crash; the checks below use the API, the callback receiver and the provider audit"
+ },
+ "batch": {
+  "requests": 10000,
+  "ack_latency_s": 0.191,
+  "final_when_killed": 3033,
+  "gateway_down_s": 1.01,
+  "restart_to_callback_delivered_s": 11.08,
+  "callback_attempts": [
+   {
+    "at_s_after_restart": 11.04,
+    "status_code": 200
+   }
+  ],
+  "batch_status_after_restart": "completed_with_failures",
+  "request_states": {
+   "succeeded": 9756,
+   "failed": 244
+  },
+  "provider_calls_total": 11514,
+  "provider_calls_before_kill": 3803,
+  "provider_rate_limited_total": 0
+ },
+ "checks": {
+  "acknowledged_before_the_crash": {
+   "ok": true,
+   "detail": "acked in 191 ms; 3,033 of 10,000 requests were final when the gateway was killed"
+  },
+  "batch_completes_after_restart": {
+   "ok": true,
+   "detail": "status 'completed_with_failures', callback 'delivered', 11.1s after the restart"
+  },
+  "callback_delivered_once": {
+   "ok": true,
+   "detail": "attempt status codes [200]"
+  },
+  "callback_summary_matches_batch_status": {
+   "ok": true,
+   "detail": "callback {'batch_id': '83c611839adb44ab8eb585099b9eb61f', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9756, 'failed': 244, 'expired': 0} vs API {'batch_id': '83c611839adb44ab8eb585099b9eb61f', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9756, 'failed': 244, 'expired': 0}"
+  },
+  "every_request_id_exactly_once_and_none_lost": {
+   "ok": true,
+   "detail": "10,000 result rows, 10,000 distinct ids, states {'succeeded': 9756, 'failed': 244}"
+  },
+  "no_60s_window_over_limit": {
+   "ok": true,
+   "detail": "provider audit across the whole run, including before and after the crash"
+  }
+ }
+}

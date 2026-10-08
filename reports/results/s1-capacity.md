@@ -9,31 +9,31 @@ Mode: http (gateway and provider simulator as separate processes, wall clock). 1
 
 - Offered: 1,100 req/s for 360.0s (warm-up 60.0s excluded from steady state)
 - **Completed per second (steady state): 815**
-- Submitted 395,996; completed 313,791 (succeeded 313,791, failed 0); expired 0; rejected 82,205; retried attempts 0
+- Submitted 395,995; completed 313,780 (succeeded 313,780, failed 0); expired 0; rejected 82,215; retried attempts 0
 - Latency p50/p95/p99: 24.8448s / 25.0932s / 25.3442s
 - Every request accounted for: **True**; all 60s windows within limits: **True**
 
 ## model-a
 
 - Configured: 50,000 RPM / 100,000,000 TPM
-- Observed (steady): 48,921 RPM / 48,921,400 TPM (97.8% / 48.9% of limit)
+- Observed (steady): 48,921 RPM / 48,921,200 TPM (97.8% / 48.9% of limit)
 - Max 60s window at provider: 49,000 requests (worst ratio to limit in effect 0.9800), 49,000,000 tokens (worst ratio 0.4900)
 - Latency p50/p95/p99: 24.8448s / 25.0932s / 25.3442s
-- Totals: {'submitted': 395996, 'rejected': 82205, 'completed': 313791, 'succeeded': 313791, 'failed': 0, 'expired': 0, 'retried': 0, 'completed_tokens': 313791000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
+- Totals: {'submitted': 395995, 'rejected': 82215, 'completed': 313780, 'succeeded': 313780, 'failed': 0, 'expired': 0, 'retried': 0, 'completed_tokens': 313780000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
 
 ## Load generator (client side)
 
-- sent: 395996
-- accepted_202: 313791
-- rejected_429: 82205
+- sent: 395995
+- accepted_202: 313780
+- rejected_429: 82215
 - client_errors: 0
 - achieved_send_rate_per_s: 1100
-- ack_latency_s_p50_p95_p99: [0.0008, 0.0015, 0.0023]
+- ack_latency_s_p50_p95_p99: [0.0008, 0.0016, 0.0028]
 - gateway_idle_after_run: True
-- final_state_of_every_sent_id: {'succeeded': 313791, 'rejected': 82205}
+- final_state_of_every_sent_id: {'succeeded': 313780, 'rejected': 82215}
 
 ## Pass criteria
 
-- [x] every_request_accounted: 395,996 sent -> {'succeeded': 313791, 'rejected': 82205} (unknown ids = client errors = 0); waiting at end: 0
+- [x] every_request_accounted: 395,995 sent -> {'succeeded': 313780, 'rejected': 82215} (unknown ids = client errors = 0); waiting at end: 0
 - [x] no_60s_window_over_limit: worst window/limit ratios: model-a rpm 0.980 tpm 0.490
 - [x] model-a_completes_90pct_of_capacity_after_warmup: 48,921 RPM of 50,000 = 97.8% (steady window [60, 360]s)

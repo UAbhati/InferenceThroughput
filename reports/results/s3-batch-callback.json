@@ -7,7 +7,7 @@
   "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
   "cpu_count": 12,
   "shards": 1,
-  "wall_s": 17.0
+  "wall_s": 18.3
  },
  "config": {
   "duration_s": 120.0,
@@ -19,6 +19,9 @@
    "queue_max": 100000,
    "queue_ttl_s": 60.0,
    "max_attempts": 3,
+   "retry_backoff_s": 0.25,
+   "retry_backoff_cap_s": 5.0,
+   "rate_limited_pause_s": 0.5,
    "headroom": 0.98,
    "tick_s": 0.005,
    "burst_s": 0.25
@@ -53,10 +56,10 @@
     "submitted": 6074,
     "rejected": 0,
     "completed": 6074,
-    "succeeded": 5815,
-    "failed": 259,
+    "succeeded": 5834,
+    "failed": 240,
     "expired": 0,
-    "retried": 1066,
+    "retried": 1055,
     "completed_tokens": 6074000,
     "waiting_at_end": 0,
     "in_flight_at_end": 0,
@@ -80,151 +83,158 @@
    },
    "limit_audit": {
     "rpm": {
-     "max_window": 7140,
-     "worst_ratio": 0.238,
-     "worst_at_s": 15.25,
+     "max_window": 7129,
+     "worst_ratio": 0.23763333333333334,
+     "worst_at_s": 16.32,
      "ok": true
     },
     "tpm": {
-     "max_window": 7140000,
-     "worst_ratio": 0.119,
-     "worst_at_s": 15.25,
+     "max_window": 7129000,
+     "worst_ratio": 0.11881666666666667,
+     "worst_at_s": 16.32,
      "ok": true
     }
    },
    "timeline": [
     {
      "t": 1,
-     "completed_per_s": 368,
+     "completed_per_s": 362,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 597
+     "provider_rpm_trailing_60s": 598
     },
     {
      "t": 2,
-     "completed_per_s": 402,
+     "completed_per_s": 410,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 1088
+     "provider_rpm_trailing_60s": 1086
     },
     {
      "t": 3,
-     "completed_per_s": 427,
+     "completed_per_s": 419,
      "rejected_per_s": 0,
      "expired_per_s": 0,
      "provider_rpm_trailing_60s": 1577
     },
     {
      "t": 4,
-     "completed_per_s": 428,
+     "completed_per_s": 422,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 2068
+     "provider_rpm_trailing_60s": 2067
     },
     {
      "t": 5,
-     "completed_per_s": 407,
+     "completed_per_s": 416,
      "rejected_per_s": 0,
      "expired_per_s": 0,
      "provider_rpm_trailing_60s": 2557
     },
     {
      "t": 6,
-     "completed_per_s": 413,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 3047
-    },
-    {
-     "t": 7,
-     "completed_per_s": 425,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 3538
-    },
-    {
-     "t": 8,
      "completed_per_s": 409,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4028
+     "provider_rpm_trailing_60s": 3045
+    },
+    {
+     "t": 7,
+     "completed_per_s": 435,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3536
+    },
+    {
+     "t": 8,
+     "completed_per_s": 394,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4027
     },
     {
      "t": 9,
-     "completed_per_s": 428,
+     "completed_per_s": 430,
      "rejected_per_s": 0,
      "expired_per_s": 0,
      "provider_rpm_trailing_60s": 4517
     },
     {
      "t": 10,
-     "completed_per_s": 421,
+     "completed_per_s": 416,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 5004
+     "provider_rpm_trailing_60s": 5005
     },
     {
      "t": 11,
-     "completed_per_s": 425,
+     "completed_per_s": 428,
      "rejected_per_s": 0,
      "expired_per_s": 0,
      "provider_rpm_trailing_60s": 5497
     },
     {
      "t": 12,
-     "completed_per_s": 406,
+     "completed_per_s": 405,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 5988
+     "provider_rpm_trailing_60s": 5986
     },
     {
      "t": 13,
-     "completed_per_s": 430,
+     "completed_per_s": 429,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 6478
+     "provider_rpm_trailing_60s": 6477
     },
     {
      "t": 14,
-     "completed_per_s": 406,
+     "completed_per_s": 426,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 6966
+     "provider_rpm_trailing_60s": 6967
     },
     {
      "t": 15,
-     "completed_per_s": 271,
+     "completed_per_s": 251,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 7138
+     "provider_rpm_trailing_60s": 7116
     },
     {
      "t": 16,
-     "completed_per_s": 8,
+     "completed_per_s": 20,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 7140
+     "provider_rpm_trailing_60s": 7128
     },
     {
      "t": 17,
-     "completed_per_s": 0,
+     "completed_per_s": 2,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 7140
+     "provider_rpm_trailing_60s": 7129
     },
     {
      "t": 18,
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 7140
+     "provider_rpm_trailing_60s": 7129
     },
     {
      "t": 19,
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 7140
+     "provider_rpm_trailing_60s": 7129
+    },
+    {
+     "t": 20,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7129
     }
    ]
   },
@@ -237,10 +247,10 @@
     "submitted": 3926,
     "rejected": 0,
     "completed": 3926,
-    "succeeded": 3842,
-    "failed": 84,
+    "succeeded": 3840,
+    "failed": 86,
     "expired": 0,
-    "retried": 461,
+    "retried": 475,
     "completed_tokens": 3926000,
     "waiting_at_end": 0,
     "in_flight_at_end": 0,
@@ -259,156 +269,163 @@
    },
    "latency_s": {
     "p50": 7.0916,
-    "p95": 13.0121,
+    "p95": 13.1422,
     "p99": 13.6758
    },
    "limit_audit": {
     "rpm": {
-     "max_window": 4336,
-     "worst_ratio": 0.2168,
-     "worst_at_s": 14.09,
+     "max_window": 4356,
+     "worst_ratio": 0.2178,
+     "worst_at_s": 15.34,
      "ok": true
     },
     "tpm": {
-     "max_window": 4336000,
-     "worst_ratio": 0.1084,
-     "worst_at_s": 14.09,
+     "max_window": 4356000,
+     "worst_ratio": 0.1089,
+     "worst_at_s": 15.34,
      "ok": true
     }
    },
    "timeline": [
     {
      "t": 1,
-     "completed_per_s": 147,
+     "completed_per_s": 152,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 347
+     "provider_rpm_trailing_60s": 353
     },
     {
      "t": 2,
-     "completed_per_s": 300,
+     "completed_per_s": 290,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 673
+     "provider_rpm_trailing_60s": 679
     },
     {
      "t": 3,
-     "completed_per_s": 293,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 1000
-    },
-    {
-     "t": 4,
-     "completed_per_s": 297,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 1328
-    },
-    {
-     "t": 5,
-     "completed_per_s": 295,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 1654
-    },
-    {
-     "t": 6,
-     "completed_per_s": 287,
-     "rejected_per_s": 0,
-     "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 1980
-    },
-    {
-     "t": 7,
      "completed_per_s": 299,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 2308
+     "provider_rpm_trailing_60s": 1006
+    },
+    {
+     "t": 4,
+     "completed_per_s": 304,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1333
+    },
+    {
+     "t": 5,
+     "completed_per_s": 301,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1660
+    },
+    {
+     "t": 6,
+     "completed_per_s": 278,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1985
+    },
+    {
+     "t": 7,
+     "completed_per_s": 307,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2312
     },
     {
      "t": 8,
-     "completed_per_s": 302,
+     "completed_per_s": 298,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 2634
+     "provider_rpm_trailing_60s": 2639
     },
     {
      "t": 9,
-     "completed_per_s": 295,
+     "completed_per_s": 291,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 2960
+     "provider_rpm_trailing_60s": 2966
     },
     {
      "t": 10,
-     "completed_per_s": 292,
+     "completed_per_s": 287,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 3283
+     "provider_rpm_trailing_60s": 3292
     },
     {
      "t": 11,
-     "completed_per_s": 295,
+     "completed_per_s": 291,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 3613
+     "provider_rpm_trailing_60s": 3619
     },
     {
      "t": 12,
-     "completed_per_s": 319,
+     "completed_per_s": 296,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 3941
+     "provider_rpm_trailing_60s": 3946
     },
     {
      "t": 13,
-     "completed_per_s": 281,
+     "completed_per_s": 305,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4267
+     "provider_rpm_trailing_60s": 4273
     },
     {
      "t": 14,
-     "completed_per_s": 208,
+     "completed_per_s": 204,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4334
+     "provider_rpm_trailing_60s": 4353
     },
     {
      "t": 15,
-     "completed_per_s": 16,
+     "completed_per_s": 22,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4336
+     "provider_rpm_trailing_60s": 4355
     },
     {
      "t": 16,
-     "completed_per_s": 0,
+     "completed_per_s": 1,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4336
+     "provider_rpm_trailing_60s": 4356
     },
     {
      "t": 17,
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4336
+     "provider_rpm_trailing_60s": 4356
     },
     {
      "t": 18,
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4336
+     "provider_rpm_trailing_60s": 4356
     },
     {
      "t": 19,
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 4336
+     "provider_rpm_trailing_60s": 4356
+    },
+    {
+     "t": 20,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4356
     }
    ]
   }
@@ -418,10 +435,10 @@
    "submitted": 10000,
    "rejected": 0,
    "completed": 10000,
-   "succeeded": 9657,
-   "failed": 343,
+   "succeeded": 9674,
+   "failed": 326,
    "expired": 0,
-   "retried": 1527,
+   "retried": 1530,
    "completed_tokens": 10000000
   },
   "steady_completed_per_s": 83,
@@ -435,35 +452,35 @@
  },
  "batch": {
   "requests": 10000,
-  "ack_latency_s": 0.026,
-  "time_from_ack_to_all_final_s": 15.48,
+  "ack_latency_s": 0.028,
+  "time_from_ack_to_all_final_s": 16.54,
   "callback_attempts": [
    {
-    "at_s_after_ack": 15.5,
+    "at_s_after_ack": 16.56,
     "status_code": 503
    },
    {
-    "at_s_after_ack": 15.92,
+    "at_s_after_ack": 17.07,
     "status_code": 503
    },
    {
-    "at_s_after_ack": 16.76,
+    "at_s_after_ack": 17.95,
     "status_code": 200
    }
   ],
   "callback_final_status": "delivered",
   "batch_status": "completed_with_failures",
   "summary": {
-   "batch_id": "ff3be7ca54a3430092b4e57cb13398f8",
+   "batch_id": "57b320b7291a4b049a1152423e9c6da6",
    "status": "completed_with_failures",
    "total": 10000,
-   "succeeded": 9657,
-   "failed": 343,
+   "succeeded": 9674,
+   "failed": 326,
    "expired": 0
   },
   "request_states": {
-   "succeeded": 9657,
-   "failed": 343
+   "succeeded": 9674,
+   "failed": 326
   },
   "progress_samples": [
    {
@@ -473,81 +490,86 @@
    },
    {
     "t": 1.03,
-    "final": 557,
+    "final": 562,
     "callback": "pending"
    },
    {
-    "t": 2.06,
-    "final": 1286,
+    "t": 2.05,
+    "final": 1268,
     "callback": "pending"
    },
    {
-    "t": 3.08,
-    "final": 2010,
+    "t": 3.07,
+    "final": 1996,
     "callback": "pending"
    },
    {
-    "t": 4.1,
-    "final": 2744,
+    "t": 4.09,
+    "final": 2739,
     "callback": "pending"
    },
    {
-    "t": 5.13,
-    "final": 3476,
+    "t": 5.11,
+    "final": 3464,
     "callback": "pending"
    },
    {
-    "t": 6.15,
-    "final": 4199,
+    "t": 6.14,
+    "final": 4194,
     "callback": "pending"
    },
    {
-    "t": 7.17,
-    "final": 4936,
+    "t": 7.16,
+    "final": 4924,
     "callback": "pending"
    },
    {
-    "t": 8.2,
-    "final": 5653,
+    "t": 8.18,
+    "final": 5643,
     "callback": "pending"
    },
    {
-    "t": 9.22,
-    "final": 6391,
+    "t": 9.2,
+    "final": 6370,
     "callback": "pending"
    },
    {
-    "t": 10.24,
-    "final": 7118,
+    "t": 10.22,
+    "final": 7100,
     "callback": "pending"
    },
    {
-    "t": 11.25,
-    "final": 7867,
+    "t": 11.24,
+    "final": 7846,
     "callback": "pending"
    },
    {
-    "t": 12.27,
-    "final": 8579,
+    "t": 12.26,
+    "final": 8547,
     "callback": "pending"
    },
    {
-    "t": 13.29,
-    "final": 9308,
+    "t": 13.28,
+    "final": 9304,
     "callback": "pending"
    },
    {
-    "t": 14.32,
-    "final": 9866,
+    "t": 14.3,
+    "final": 9859,
     "callback": "pending"
    },
    {
-    "t": 15.34,
-    "final": 9996,
+    "t": 15.32,
+    "final": 9987,
     "callback": "pending"
    },
    {
-    "t": 16.37,
+    "t": 16.34,
+    "final": 9999,
+    "callback": "pending"
+   },
+   {
+    "t": 17.36,
     "final": 10000,
     "callback": "retrying"
    }
@@ -556,11 +578,11 @@
  "checks": {
   "ack_within_1s": {
    "ok": true,
-   "detail": "26 ms for 10,000 requests"
+   "detail": "28 ms for 10,000 requests"
   },
   "callback_sent_only_after_all_final": {
    "ok": true,
-   "detail": "all-final at +15.48s, first callback attempt at +15.50s"
+   "detail": "all-final at +16.54s, first callback attempt at +16.56s"
   },
   "first_attempts_rejected_then_delivered": {
    "ok": true,
@@ -568,7 +590,7 @@
   },
   "callback_summary_matches_batch_status": {
    "ok": true,
-   "detail": "callback {'batch_id': 'ff3be7ca54a3430092b4e57cb13398f8', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9657, 'failed': 343, 'expired': 0} vs API {'batch_id': 'ff3be7ca54a3430092b4e57cb13398f8', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9657, 'failed': 343, 'expired': 0}"
+   "detail": "callback {'batch_id': '57b320b7291a4b049a1152423e9c6da6', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9674, 'failed': 326, 'expired': 0} vs API {'batch_id': '57b320b7291a4b049a1152423e9c6da6', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9674, 'failed': 326, 'expired': 0}"
   },
   "every_request_id_exactly_once": {
    "ok": true,
@@ -576,7 +598,7 @@
   },
   "transient_and_permanent_failures_present": {
    "ok": true,
-   "detail": "states {'succeeded': 9657, 'failed': 343}; retry attempts 1,527"
+   "detail": "states {'succeeded': 9674, 'failed': 326}; retry attempts 1,530"
   },
   "no_60s_window_over_limit": {
    "ok": true,

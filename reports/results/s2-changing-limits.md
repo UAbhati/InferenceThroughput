@@ -16,18 +16,18 @@ Mode: http (gateway and provider simulator as separate processes, wall clock). 1
 ## model-a
 
 - Configured: 30,000 RPM / 60,000,000 TPM
-- Observed (steady): 18,162 RPM / 18,161,750 TPM (limits changed during run; see timeline)
+- Observed (steady): 18,158 RPM / 18,158,250 TPM (limits changed during run; see timeline)
 - Max 60s window at provider: 29,400 requests (worst ratio to limit in effect 1.0000), 29,400,000 tokens (worst ratio 0.4900)
 - Latency p50/p95/p99: 30.3154s / 30.6185s / 30.6185s
-- Totals: {'submitted': 195184, 'rejected': 0, 'completed': 116777, 'succeeded': 116777, 'failed': 0, 'expired': 78407, 'retried': 0, 'completed_tokens': 116777000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
+- Totals: {'submitted': 195184, 'rejected': 0, 'completed': 116778, 'succeeded': 116778, 'failed': 0, 'expired': 78406, 'retried': 0, 'completed_tokens': 116778000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
 
 ## model-b
 
 - Configured: 20,000 RPM / 40,000,000 TPM
-- Observed (steady): 19,568 RPM / 19,568,500 TPM (97.8% / 48.9% of limit)
+- Observed (steady): 19,568 RPM / 19,568,250 TPM (97.8% / 48.9% of limit)
 - Max 60s window at provider: 19,600 requests (worst ratio to limit in effect 0.9800), 19,600,000 tokens (worst ratio 0.4900)
 - Latency p50/p95/p99: 30.3154s / 30.9247s / 31.2339s
-- Totals: {'submitted': 134814, 'rejected': 0, 'completed': 107711, 'succeeded': 107711, 'failed': 0, 'expired': 27103, 'retried': 0, 'completed_tokens': 107711000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
+- Totals: {'submitted': 134814, 'rejected': 0, 'completed': 107710, 'succeeded': 107710, 'failed': 0, 'expired': 27104, 'retried': 0, 'completed_tokens': 107710000, 'waiting_at_end': 0, 'in_flight_at_end': 0, 'unaccounted': 0}
 
 ## Load generator (client side)
 
@@ -36,7 +36,7 @@ Mode: http (gateway and provider simulator as separate processes, wall clock). 1
 - rejected_429: 0
 - client_errors: 0
 - achieved_send_rate_per_s: 1100
-- ack_latency_s_p50_p95_p99: [0.0008, 0.0016, 0.0039]
+- ack_latency_s_p50_p95_p99: [0.0008, 0.0018, 0.0042]
 - gateway_idle_after_run: True
 - final_state_of_every_sent_id: {'succeeded': 224488, 'expired': 105510}
 
@@ -44,9 +44,9 @@ Mode: http (gateway and provider simulator as separate processes, wall clock). 1
 
 - [x] every_request_accounted: 329,998 sent -> {'succeeded': 224488, 'expired': 105510} (unknown ids = client errors = 0); waiting at end: 0
 - [x] no_60s_window_over_limit: worst window/limit ratios: model-a rpm 1.000 tpm 0.490, model-b rpm 0.980 tpm 0.490
-- [x] model-a_follows_limit_30000_from_0s: 29,361 completed/min over [15s,100s] vs limit 30,000
-- [x] model-a_follows_limit_5000_from_100s: 4,905 completed/min over [165s,200s] vs limit 5,000
-- [x] model-a_follows_limit_30000_from_200s: 29,388 completed/min over [215s,300s] vs limit 30,000
+- [x] model-a_follows_limit_30000_from_0s: 29,362 completed/min over [15s,100s] vs limit 30,000
+- [x] model-a_follows_limit_5000_from_100s: 4,903 completed/min over [165s,200s] vs limit 5,000
+- [x] model-a_follows_limit_30000_from_200s: 29,379 completed/min over [215s,300s] vs limit 30,000
 - [x] model-b_unaffected_and_busy: 97.8% of its 20,000 RPM, throughout the run incl. while the other model was constrained
 
 ## Limit changes applied while running

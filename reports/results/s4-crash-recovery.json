@@ -7,7 +7,7 @@
   "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
   "cpu_count": 12,
   "shards": 1,
-  "wall_s": 17.2
+  "wall_s": 17.4
  },
  "config": {
   "duration_s": 180.0,
@@ -19,6 +19,9 @@
    "queue_max": 100000,
    "queue_ttl_s": 60.0,
    "max_attempts": 3,
+   "retry_backoff_s": 0.25,
+   "retry_backoff_cap_s": 5.0,
+   "rate_limited_pause_s": 0.5,
    "headroom": 0.98,
    "tick_s": 0.005,
    "burst_s": 0.25
@@ -80,15 +83,15 @@
    },
    "limit_audit": {
     "rpm": {
-     "max_window": 6958,
-     "worst_ratio": 0.23193333333333332,
-     "worst_at_s": 16.3,
+     "max_window": 6933,
+     "worst_ratio": 0.2311,
+     "worst_at_s": 16.48,
      "ok": true
     },
     "tpm": {
-     "max_window": 6958000,
-     "worst_ratio": 0.11596666666666666,
-     "worst_at_s": 16.3,
+     "max_window": 6933000,
+     "worst_ratio": 0.11555,
+     "worst_at_s": 16.48,
      "ok": true
     }
    },
@@ -98,7 +101,7 @@
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 518
+     "provider_rpm_trailing_60s": 514
     }
    ]
   },
@@ -138,15 +141,15 @@
    },
    "limit_audit": {
     "rpm": {
-     "max_window": 4556,
-     "worst_ratio": 0.2278,
-     "worst_at_s": 15.81,
+     "max_window": 4579,
+     "worst_ratio": 0.22895,
+     "worst_at_s": 16.36,
      "ok": true
     },
     "tpm": {
-     "max_window": 4556000,
-     "worst_ratio": 0.1139,
-     "worst_at_s": 15.81,
+     "max_window": 4579000,
+     "worst_ratio": 0.114475,
+     "worst_at_s": 16.36,
      "ok": true
     }
    },
@@ -156,7 +159,7 @@
      "completed_per_s": 0,
      "rejected_per_s": 0,
      "expired_per_s": 0,
-     "provider_rpm_trailing_60s": 345
+     "provider_rpm_trailing_60s": 343
     }
    ]
   }
@@ -184,33 +187,33 @@
  },
  "batch": {
   "requests": 10000,
-  "ack_latency_s": 0.191,
-  "final_when_killed": 3033,
-  "gateway_down_s": 1.01,
-  "restart_to_callback_delivered_s": 11.08,
+  "ack_latency_s": 0.192,
+  "final_when_killed": 3018,
+  "gateway_down_s": 1.02,
+  "restart_to_callback_delivered_s": 11.4,
   "callback_attempts": [
    {
-    "at_s_after_restart": 11.04,
+    "at_s_after_restart": 11.37,
     "status_code": 200
    }
   ],
   "batch_status_after_restart": "completed_with_failures",
   "request_states": {
-   "succeeded": 9756,
-   "failed": 244
+   "succeeded": 9760,
+   "failed": 240
   },
-  "provider_calls_total": 11514,
-  "provider_calls_before_kill": 3803,
+  "provider_calls_total": 11512,
+  "provider_calls_before_kill": 3793,
   "provider_rate_limited_total": 0
  },
  "checks": {
   "acknowledged_before_the_crash": {
    "ok": true,
-   "detail": "acked in 191 ms; 3,033 of 10,000 requests were final when the gateway was killed"
+   "detail": "acked in 192 ms; 3,018 of 10,000 requests were final when the gateway was killed"
   },
   "batch_completes_after_restart": {
    "ok": true,
-   "detail": "status 'completed_with_failures', callback 'delivered', 11.1s after the restart"
+   "detail": "status 'completed_with_failures', callback 'delivered', 11.4s after the restart"
   },
   "callback_delivered_once": {
    "ok": true,
@@ -218,11 +221,11 @@
   },
   "callback_summary_matches_batch_status": {
    "ok": true,
-   "detail": "callback {'batch_id': '83c611839adb44ab8eb585099b9eb61f', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9756, 'failed': 244, 'expired': 0} vs API {'batch_id': '83c611839adb44ab8eb585099b9eb61f', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9756, 'failed': 244, 'expired': 0}"
+   "detail": "callback {'batch_id': '2c9543934ad9400bb344f0ddf8afe665', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9760, 'failed': 240, 'expired': 0} vs API {'batch_id': '2c9543934ad9400bb344f0ddf8afe665', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9760, 'failed': 240, 'expired': 0}"
   },
   "every_request_id_exactly_once_and_none_lost": {
    "ok": true,
-   "detail": "10,000 result rows, 10,000 distinct ids, states {'succeeded': 9756, 'failed': 244}"
+   "detail": "10,000 result rows, 10,000 distinct ids, states {'succeeded': 9760, 'failed': 240}"
   },
   "no_60s_window_over_limit": {
    "ok": true,

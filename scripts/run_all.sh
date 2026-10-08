@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reproduce every result. Usage: scripts/run_all.sh [quick]
 #   full  (~25 min): tests, both scale benchmarks, scenarios 1-3 (and 4 when DATABASE_URL is set)
-#   quick (~4 min) : tests, both scale benchmarks, scenario 3
+#   quick (~5 min) : tests, both scale benchmarks, scenario 3
 # Needs the virtualenv from the README to be active (or set PYTHON=/path/to/python).
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -1,274 +1,309 @@
 # High-throughput inference under provider limits
 
-A Python system that pushes inference requests to rate-limited providers as fast as the limits allow, and never faster.
-It contains the **gateway** (queues, RPM/TPM limiting, retries, asynchronous batches with callbacks), a **provider
-simulator**, and a **load generator**. Everything is reproducible from the scenario files in `scenarios/`.
+Inference providers cap how many requests and tokens you can send per minute. This repo is a gateway that sends work to
+such a provider as fast as the caps allow and never faster, plus a provider simulator and a load generator to prove it.
 
-Results are in [reports/BENCHMARK.md](reports/BENCHMARK.md). Headline numbers (measured, Apple M4 Pro, 12 cores):
+It handles single requests and batches (with a callback when a batch finishes), per-model limits that can change while it
+runs, and what happens when demand is higher than capacity. Postgres and Redis are optional: with them the gateway survives
+crashes and several copies can run side by side; without them it is a single in-memory process.
+
+The numbers below are from one MacBook Pro (M4 Pro, 12 cores). The full write-up is in
+[reports/BENCHMARK.md](reports/BENCHMARK.md).
 
 | Goal | Result |
 |---|---|
-| 50,000 RPM / 100M TPM provider capacity | 97.8% of the RPM limit completed over a 5-minute steady state; no 60s window above the limit |
-| Different models + changing limits | limits cut and restored at runtime with no restart; each model stayed within its current limit |
-| Async batch + callback | 10,000 requests acknowledged in 26 ms (188 ms when saved durably first), callback delivered after two rejections, every id exactly once |
-| Crash recovery (optional, needs Postgres) | gateway killed with `kill -9` mid-batch; the restarted gateway finished it, delivered the callback once, no request lost or duplicated |
-| **300,000 simulated requests/s** (required) | **329,947 completed/s** |
-| **1,000,000 simulated requests/s** (stretch) | **1,099,978 completed/s** |
-| 10 billion requests/minute (planning) | design only, see [BENCHMARK.md](reports/BENCHMARK.md#9-projection-10-billion-requests-per-minute-not-measured) |
+| Use the 50,000 RPM / 100M TPM capacity | 97.8% of the RPM limit over a 5 minute steady state; the busiest 60 s window was 98.0% of the limit |
+| Different models, limits changed while running | Model A cut from 30,000 to 5,000 RPM and back with no restart; both models stayed inside their current limits |
+| Async batch with callback | 10,000 requests acknowledged in 28 ms, callback refused twice then delivered, every id exactly once |
+| Crash recovery (needs Postgres) | gateway killed with `kill -9` at 3,018 of 10,000; the restarted one finished the batch, callback delivered once |
+| 300,000 simulated requests/s (required) | 330,020 completed per second |
+| 1,000,000 simulated requests/s (stretch) | 1,100,012 completed per second |
+| 10 billion requests/minute (planning) | design only, [section 9 of the report](reports/BENCHMARK.md#9-projection-10-billion-requests-per-minute-not-measured) |
 
-## Try it interactively (demo console + Swagger)
-One command starts the provider simulator and the gateway and opens a control page:
-
-```bash
-python -m loadgen.console            # http://127.0.0.1:8080   (add DATABASE_URL / REDIS_URL to include them)
-```
-
-- **Console** (`:8080`): live per-model throughput against the limit line, queue depths and counters; start/stop load and change the rate while it runs;
-  change a model's limits while running (with a "cut to 1/6" button); send a batch with a callback and make the receiver refuse its first N attempts;
-  inject provider failures; and, with Postgres on, kill the gateway with SIGKILL and restart it to watch the batch resume.
-- **Swagger** for the gateway (`http://127.0.0.1:8000/docs`) and the provider simulator (`http://127.0.0.1:8001/docs`), both linked from the console: every endpoint
-  below can be called from the browser. A ready-made batch example is prefilled under `POST /v1/batches`.
-
-The console is a separate process that talks to the services over HTTP; it is a way to drive and watch the system, not part of it. The automated runs
-(`python -m loadgen.run ...`) are what the benchmark report is based on.
+The two scale numbers use an in-process simulated provider and limits set far above the load (the assignment allows that).
+See [simulation assumptions](#assumptions-and-simulation-notes) before comparing them to anything.
 
 ## Contents
-1. [Setup](#setup) 2. [Run the pieces](#run-the-pieces) 3. [API](#api) 4. [Configure models and change limits](#configure-models-and-change-limits)
-5. [Durability and several replicas](#durability-and-several-replicas) 6. [Run the validation scenarios](#run-the-validation-scenarios)
-7. [Design](#design-decisions-and-tradeoffs) 8. [Simulation assumptions](#simulation-assumptions) 9. [Known gaps](#known-gaps)
+[Setup](#setup) · [Try it](#try-it) · [API](#api) · [Configuration and changing limits](#configuration-and-changing-limits) ·
+[Postgres and Redis](#postgres-and-redis-optional) · [Validation scenarios](#validation-scenarios) · [How it works](#how-it-works) ·
+[Gotchas I looked at](#gotchas-i-looked-at) · [Assumptions and simulation notes](#assumptions-and-simulation-notes) ·
+[Known gaps](#known-gaps) · [Layout](#layout)
 
 ## Setup
-Python 3.11+ (developed on 3.14). **No external services are needed** for the benchmarks and Scenarios 1-3; Postgres and Redis are optional
-(see [Durability and several replicas](#durability-and-several-replicas)).
+Python 3.11 or newer (developed on 3.14). Nothing else is needed for the benchmarks and Scenarios 1 to 3.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,report,persistence]"   # report = matplotlib chart; persistence = asyncpg + redis clients (both optional)
-pytest -q                                    # 33 tests, ~75 s; the 8 persistence tests are skipped unless `docker compose up -d` is running
+pip install -e ".[dev,report,persistence]"   # report = matplotlib for the chart, persistence = Postgres/Redis clients
+pytest -q                                    # 46 tests, about 80 s
 ```
 
-Everything runs on localhost; processes are started with `spawn`, so it behaves the same on macOS, Linux and Windows.
-The bulk benchmark picks its number of worker processes from `os.cpu_count()` (override with `--procs`).
+The 12 tests that need Postgres and Redis skip themselves unless `docker compose up -d` is running. Everything runs on
+localhost. Worker processes are started with `spawn`, so it behaves the same on macOS, Linux and Windows. The bulk benchmark
+sizes itself from `os.cpu_count()` (override with `--procs`).
 
-## Run the pieces
-Three processes, started separately (the scenario runner does this for you):
+## Try it
+The quickest way to see it work is the demo console. One command starts the provider and the gateway and serves a control page:
 
 ```bash
-# 1. provider simulator  (models, limits, latency, failures come from the YAML)
-PROVIDER_MODELS=config/models.yaml uvicorn provider_sim.app:app --port 8001
+python -m loadgen.console          # then open http://127.0.0.1:8080
+```
 
-# 2. gateway
+From the page you can start and stop load, change a model's limits while it runs, send a batch with a callback (and make the
+receiver refuse the first few attempts), inject provider failures, and, if Postgres is on, kill the gateway and restart it.
+It plots throughput against the limit live. It links to the Swagger pages of both services
+(`http://127.0.0.1:8000/docs` and `http://127.0.0.1:8001/docs`), where every endpoint below can be called from the browser.
+The console is a separate process that talks to the services over HTTP, so it is a viewer and not part of the system.
+
+To run the pieces yourself:
+
+```bash
+PROVIDER_MODELS=config/models.yaml uvicorn provider_sim.app:app --port 8001
 GATEWAY_MODELS=config/models.yaml PROVIDER_URL=http://127.0.0.1:8001 uvicorn gateway.app:app --port 8000
 
-# 3. load generator + scenario runner (starts 1 and 2 itself, runs the load, writes a report)
-python -m loadgen.run scenarios/s3_batch_callback.yaml
-```
-
-Try it by hand:
-
-```bash
 curl -s localhost:8000/v1/requests -H 'content-type: application/json' \
      -d '{"request_id":"demo-1","model":"model-a","payload":{"prompt":"hi"},"estimated_tokens":1000}'
 curl -s localhost:8000/v1/requests/demo-1
 curl -s localhost:8000/admin/status | python -m json.tool
-curl -s localhost:8001/admin/audit | python -m json.tool      # what the provider actually received, per model
+curl -s localhost:8001/admin/audit | python -m json.tool     # what the provider really received
 ```
 
 ## API
-Gateway (`uvicorn gateway.app:app`):
+Gateway:
 
-| Endpoint | Purpose |
+| Endpoint | What it does |
 |---|---|
-| `POST /v1/requests` `{request_id?, model, payload, estimated_tokens}` | Submit one request. `202` queued, `200` if the id already exists (idempotent), `429` + `Retry-After` if the model's queue is full, `404` unknown model. |
-| `GET /v1/requests/{id}` | State: `queued`, `in_flight`, `succeeded`, `failed`, `expired`, `rejected`; attempts, latency, error. |
-| `POST /v1/requests/status` `{ids:[...]}` | State of many ids at once (used to verify nothing is lost). |
-| `POST /v1/batches` `{requests:[...], callback_url?}` | Returns `202` with a `batch_id` immediately; work happens in the background. `409` on duplicate ids. |
-| `GET /v1/batches/{id}` | `status` (`processing`, `completed`, `completed_with_failures`), counts, pending breakdown, callback delivery state. |
-| `GET /v1/batches/{id}/results?offset=&limit=` | Per-request results, paged, in submission order. |
-| `PUT /admin/models/{model}/limits` `{rpm?, tpm?}` | Change limits while running. |
-| `GET /admin/models`, `/admin/status`, `/admin/stats` | Limits, queue depths, window usage, per-second statistics. |
+| `POST /v1/requests` | Submit one request: `{request_id?, model, payload, estimated_tokens}`. `202` queued, `200` if the id is already known, `429` (with `Retry-After`) if the model's queue is full. |
+| `GET /v1/requests/{id}` | State (`queued`, `in_flight`, `succeeded`, `failed`, `expired`, `rejected`), attempts, latency, error. |
+| `POST /v1/requests/status` | States for up to 10,000 ids at once. |
+| `POST /v1/batches` | `{requests: [...], callback_url?}`. Returns `202` with a `batch_id` straight away; the work happens in the background. Optional `Idempotency-Key` header. |
+| `GET /v1/batches/{id}` | `processing`, `completed` or `completed_with_failures`, counts, what is still pending, callback delivery state. |
+| `GET /v1/batches/{id}/results?offset=&limit=` | Per-request results in submission order. |
+| `PUT /admin/models/{model}/limits` | Change `rpm` and/or `tpm` now. |
+| `GET /admin/models`, `/admin/status`, `/admin/stats` | Limits, queue depths, usage in the last 60 s, per-second statistics. |
 
-With `DATABASE_URL` set, reads fall back to Postgres for anything not in memory (finished work after a restart, work owned by another replica),
-and `POST /v1/requests` with a client-supplied `request_id` is idempotent across restarts. A batch that cannot be saved is refused with `503`
-and nothing is accepted.
+Errors: `404` unknown model or id, `409` duplicate ids in a batch, `413` batch over 100,000 requests, `422` bad input
+(see below), `429` queue full, `503` a batch could not be saved.
 
-**Callback** (`POST callback_url`, sent once every request in the batch is final): `{event, batch_id, status, total, succeeded,
-failed, expired, completed_at, results_url, results?}`. `failed` includes `expired`. Results are inlined for batches of up to
-100 requests, otherwise fetch `results_url`. Headers `Idempotency-Key` and `X-Batch-Id` carry the batch id so receivers can
-de-duplicate. Any non-2xx or network error is retried with exponential backoff and jitter (default: 8 attempts, 0.5s doubling
-to a 15s cap). The same summary is available at `GET /v1/batches/{id}`.
+Input rules: `request_id` is 1 to 128 characters from `A-Za-z0-9._:@/-`; `estimated_tokens` is 1 to 10,000,000; a payload
+is at most 64 KB as JSON. A request that needs more tokens than the model's whole per-minute budget is refused with `422`
+(`request_too_large`), because it could never be sent. In a batch that refuses the whole batch.
 
-Provider simulator (`uvicorn provider_sim.app:app`): `POST /inference` (`200` success, `503` transient failure, `422`
-permanent failure, `429` over its own limit), `PUT /admin/models/{m}/limits`, `GET /admin/audit`, `GET /admin/audit/raw`.
+**Retrying safely.** Sending the same `request_id` again returns the existing request instead of creating a second one, even
+if the first call is still in progress and even after a restart (with Postgres). For batches, send an `Idempotency-Key`
+header: repeating the call with the same key and body returns the same batch (`200`, `created: false`), the same key with a
+different body is a `422`.
 
-## Configure models and change limits
-Models live in a YAML file (`config/models.yaml` is the default; scenario files embed the same structure):
+**Callback.** When every request in a batch is final, the gateway POSTs to `callback_url`:
+`{event, batch_id, status, total, succeeded, failed, expired, completed_at, results_url, results?}`. `failed` includes
+`expired`. Results are inlined for batches of up to 100 requests, otherwise fetch `results_url`. The headers `Idempotency-Key`
+and `X-Batch-Id` carry the batch id so a receiver can ignore duplicates. Anything other than a 2xx, a timeout or a connection
+error is retried with exponential backoff and jitter (8 attempts by default, 0.5 s doubling up to 15 s). The same summary is
+always available from `GET /v1/batches/{id}`, whether or not the callback worked.
+
+Provider simulator: `POST /inference` answers `200`, `503` (transient failure), `422` (permanent failure) or `429` (over its own
+limit). Admin endpoints change limits and behaviour (`PUT /admin/models/{m}/limits`, `/behavior`) and read the audit
+(`GET /admin/audit`, `/admin/audit/raw`).
+
+## Configuration and changing limits
+Models and behaviour live in one YAML file. `config/models.yaml` is the default, and each scenario file embeds the same structure:
 
 ```yaml
 models:
   model-a:
-    rpm: 30000                 # requests per minute
-    tpm: 60000000              # tokens per minute
-    latency_ms_median: 300     # simulated provider latency (lognormal)
+    rpm: 30000                    # requests per minute
+    tpm: 60000000                 # tokens per minute
+    latency_ms_median: 300        # simulated provider latency (lognormal)
     latency_sigma: 0.4
-    transient_failure_rate: 0.0   # simulated 503s, retried by the gateway
-    permanent_failure_rate: 0.0   # simulated 422s, not retried
-engine:                        # behaviour when demand exceeds capacity
-  queue_max: 100000            # per model; a full queue rejects new requests (429)
-  queue_ttl_s: 30              # a request waiting longer than this expires
-  max_attempts: 3              # first try + retries of transient failures
-  headroom: 1.0                # fraction of the provider limit the gateway uses (scenarios use 0.98)
-  burst_s: 0.25                # never send more than this many seconds of capacity at once
-gateway:                       # batches and callbacks
+    transient_failure_rate: 0.0   # share of calls answered 503, retried by the gateway
+    permanent_failure_rate: 0.0   # share answered 422, not retried
+engine:                           # what happens when demand exceeds capacity
+  queue_max: 100000               # per model; a full queue rejects with 429
+  queue_ttl_s: 30                 # queued longer than this and the request expires
+  max_attempts: 3                 # first try plus retries of transient failures
+  retry_backoff_s: 0.25           # first retry waits about this long, doubling, with jitter
+  retry_backoff_cap_s: 5
+  rate_limited_pause_s: 0.5       # a provider 429 pauses that model for this long
+  headroom: 1.0                   # share of the provider's limit the gateway uses (the scenarios use 0.98)
+  burst_s: 0.25                   # never send more than this many seconds of capacity at once
+gateway:
+  batch_max_requests: 100000
+  max_payload_bytes: 65536
   callback_max_attempts: 8
   callback_backoff_base_s: 0.5
   callback_backoff_cap_s: 15
+  callback_timeout_s: 5
   callback_inline_results_max: 100
+  callback_allowed_hosts: null    # e.g. [hooks.example.com]; null allows any host
 ```
 
-Change a limit **while the system runs**; the new limit applies to the next admission decision:
+Environment variables: `GATEWAY_MODELS`, `PROVIDER_MODELS` (YAML paths), `PROVIDER_URL`, `GATEWAY_PUBLIC_URL` (used in
+`results_url`), `DATABASE_URL`, `REDIS_URL`, `ADMIN_TOKEN` (when set, `/admin/*` needs `Authorization: Bearer <token>`).
+Models are read at startup, so adding a model means a restart; changing a model's limits does not.
+
+Change a limit while everything is running. It applies to the next admission decision:
 
 ```bash
 curl -X PUT localhost:8000/admin/models/model-a/limits -H 'content-type: application/json' -d '{"rpm": 5000}'
-curl -X PUT localhost:8001/admin/models/model-a/limits -H 'content-type: application/json' -d '{"rpm": 5000}'   # simulated provider
+curl -X PUT localhost:8001/admin/models/model-a/limits -H 'content-type: application/json' -d '{"rpm": 5000}'   # the simulated provider
 ```
 
-(In the scenarios the provider is changed too, because the point is that the provider's capacity changed.
-Raise the provider first and lower the gateway first, so the gateway never exceeds what the provider accepts.)
-Scenario files can schedule changes with `changes: [{at_s, model, rpm, tpm}]`.
+In the scenarios the provider is changed as well, because the point is that the provider's capacity changed. Raise the
+provider first and lower the gateway first, so the gateway is never allowed more than the provider accepts. A scenario file
+can schedule changes with `changes: [{at_s, model, rpm, tpm}]`.
 
-## Durability and several replicas
-Both are optional and independent. Start the backing services and point the gateway at them (copy `.env.example`):
-
+## Postgres and Redis (optional)
 ```bash
-docker compose up -d                      # Postgres on :55432, Redis on :56379 (throwaway data)
+docker compose up -d                       # Postgres on :55432, Redis on :56379 (throwaway data)
 export DATABASE_URL=postgresql://inference:inference@127.0.0.1:55432/inference
 export REDIS_URL=redis://127.0.0.1:56379/0
-uvicorn gateway.app:app --port 8000       # a second replica: the same command with --port 8002
+uvicorn gateway.app:app --port 8000        # a second replica is the same command on another port
 ```
 
-**With `DATABASE_URL` (Postgres):**
-- A batch and all its requests are saved **before the 202**, so an acknowledged batch survives a crash. Single requests and every state change are
-  written behind in groups (default every 100 ms, one statement per table), off the request path.
-- Current model limits are stored, so a runtime limit change survives a restart.
-- **Recovery:** on start, and every 2 s when Redis is used, a replica adopts the unfinished work of replicas that are no longer alive: open requests
-  are queued again, batches resume where they stopped, callbacks that were not delivered are sent. Work claimed this way is claimed atomically, so two
-  replicas never adopt the same batch. Requests that were in flight at the crash run again, so delivery to the provider is **at-least-once**.
-- Finished requests and batches stay readable after a restart.
+**Postgres** makes the gateway durable. A batch and all of its requests are written before the `202`, so an acknowledged
+batch survives a crash. Single requests and the final state of every request are written behind, in groups every 100 ms,
+off the request path. Runtime limit changes are stored too. When a gateway starts (and every 2 s when Redis is on), it
+adopts the unfinished work of gateways that are gone: queued requests go back in the queue, batches carry on from where they
+stopped, undelivered callbacks are sent. Adoption is atomic, so two replicas never take the same batch. Requests that were
+in flight at the moment of the crash run again, so delivery to the provider is at-least-once. Finished work stays readable after a restart.
 
-**With `REDIS_URL`:** several gateway replicas can run side by side (put any load balancer in front).
-- Every replica heartbeats; each model's limit is **split evenly across the live replicas**, so their combined usage cannot exceed the limit.
-- A limit changed through any replica is stored once and pushed to all of them.
-- A replica that joins waits 2.5 s before dispatching so the existing replicas can shrink their share first; a replica that leaves or dies
-  hands its share back within a few seconds.
-- Heartbeats also tell the survivors which replica died, so they know whose work to adopt.
+**Redis** lets several gateways run together. Each one sends a heartbeat. Every model's limit is split evenly across the
+live gateways, so their combined usage cannot go over it. A limit changed through any gateway is stored once and pushed to
+all of them. A gateway that joins waits 2.5 s before it starts sending, so the others have time to give up part of their
+share; one that leaves or dies hands its share back within a few seconds. The heartbeats are also how survivors learn that
+a gateway died and its work needs adopting.
 
-Without `REDIS_URL` a gateway is a single replica and treats every other owner found in the database as dead, so run only one gateway per database in that mode.
-Neither service is on the 300k / 1M per second benchmark path: that path is in memory by design.
+Without Redis a gateway assumes it is the only one and treats every other owner in the database as dead, so run one
+gateway per database in that mode. Neither service is involved in the 300k and 1M benchmarks, which run in memory.
 
-## Run the validation scenarios
-Each command starts the provider and gateway, drives load, applies any limit changes, then writes
-`runs/<name>-<timestamp>/{report.md,report.json}` (plus a chart for Scenario 2) and **exits non-zero if a pass criterion fails**.
+## Validation scenarios
+Each command starts the provider and gateway, drives load, applies any scheduled limit changes and writes
+`runs/<name>-<timestamp>/` with `report.md`, `report.json` and, for limit changes, a chart. It exits non-zero if a pass
+criterion fails.
 
 | Scenario | Command | Time | Passes when |
 |---|---|---|---|
-| 1. Reach provider capacity | `python -m loadgen.run scenarios/s1_capacity.yaml` | ~7 min | ≥90% of allowed capacity completed after warm-up; no 60s window above either limit; every request accounted for |
-| 2. Models and changing limits | `python -m loadgen.run scenarios/s2_changing_limits.yaml` | ~6 min | each model within its current limit; Model A follows both changes; Model B unaffected; report shows limits and throughput over time |
-| 3. Async batch completion | `python -m loadgen.run scenarios/s3_batch_callback.yaml` | ~1 min | ack < 1 s; callback only after all final; delivered after the destination recovers; summary equals API; each id exactly once |
-| 4. Crash recovery (needs `DATABASE_URL`) | `python -m loadgen.run scenarios/s4_crash_recovery.yaml` | ~1 min | gateway killed with SIGKILL at 30% of a 10,000-request batch; the restarted gateway finishes it; callback delivered once; every id exactly once, none lost |
-| Required scale benchmark | `python -m loadgen.run scenarios/scale_300k.yaml` | ~1 min | see report |
-| Stretch scale benchmark | `python -m loadgen.run scenarios/scale_1m.yaml` | ~1 min | see report |
+| 1. Reach provider capacity | `python -m loadgen.run scenarios/s1_capacity.yaml` | 7 min | at least 90% of allowed capacity completed after warm-up; no 60 s window over either limit; every request accounted for |
+| 2. Models and changing limits | `python -m loadgen.run scenarios/s2_changing_limits.yaml` | 6 min | each model within its current limit; Model A follows both changes; Model B unaffected; limits and throughput over time in the report |
+| 3. Async batch | `python -m loadgen.run scenarios/s3_batch_callback.yaml` | 1 min | ack under 1 s; callback only after all requests are final; delivered after the receiver recovers; callback equals the batch API; each id once |
+| 4. Crash recovery | `python -m loadgen.run scenarios/s4_crash_recovery.yaml` | 1 min | needs `DATABASE_URL`. Gateway killed with SIGKILL at 30% of a batch; the restarted one finishes it; callback once; each id once |
+| Required scale | `python -m loadgen.run scenarios/scale_300k.yaml` | 1 min | see the report |
+| Stretch scale | `python -m loadgen.run scenarios/scale_1m.yaml` | 1 min | see the report |
 
-`scripts/run_all.sh` runs the tests plus all of the above (`scripts/run_all.sh quick` skips Scenarios 1 and 2); it includes Scenario 4 when `DATABASE_URL` is set.
-Scenarios 1-3 also run with `DATABASE_URL` and `REDIS_URL` set, exercising the durable path end to end.
-Edit a scenario file to choose the request rate, duration, model mix, batch size (`load.batch_size`) and token size (`load.token_size`, `token_jitter`).
+`scripts/run_all.sh` runs the tests and everything above (`scripts/run_all.sh quick` skips Scenarios 1 and 2).
 
-How the numbers are measured: latency and request states come from the gateway's own records; rate-limit compliance comes from
-the **provider simulator's independent audit**, which counts every call it accepted in 10 ms buckets and reports the maximum
-over any 60-second span. It shares no code with the gateway's limiter.
+**Choosing the load.** The load generator takes its settings from the scenario file, and any of them can be overridden on the command line:
 
-## Design decisions and tradeoffs
-**One engine, two ways to drive it.** The same `Engine` (per-model queue, limiter, retry logic) runs behind the real HTTP
-service and the high-rate benchmark. The HTTP path (Scenarios 1-3) calls the simulator over the network. The bulk path
-(300k / 1M per second) runs the engine and an in-process simulator inside N worker processes, moving requests in numpy chunks
-of thousands instead of one at a time. Python is too slow for a per-request loop at 1M/s but fast enough when each operation
-covers a chunk.
+```bash
+python -m loadgen.run scenarios/s1_capacity.yaml --rate 2000 --duration 90 --mix model-a=0.7,model-b=0.3 --token-size 500 --batch-size 50
+```
 
-**Strict limiter.** Usage is counted in 100 ms buckets over a window one bucket longer than 60 s, so *any* real 60 s interval is
-covered. This guarantees the "no 60 s period exceeds the limit" criterion at a cost of about 0.17% of capacity. A second,
-smoothing credit bucket (`burst_s`) stops the gateway from emitting a whole minute of capacity in one instant (this
-saturated the event loop in an early run).
+`--batch-size` above 1 sends requests through `POST /v1/batches` in groups of that size (HTTP scenarios only). A customised run
+drops the scenario's own pass criteria but still checks accounting and limits. Each report lists submitted, completed,
+succeeded and failed requests, the completion rate, p50/p95/p99 latency, configured and observed RPM and TPM per model, and for
+batch scenarios the batch and callback timing.
 
-**Per-model isolation.** Each model has its own queue and limiter, so a constrained model cannot slow another one.
+**How the numbers are checked.** Request states and latency come from the gateway's own records. Compliance with the limits
+comes from the provider simulator's audit, which counts every call it accepted in 10 ms buckets and reports the maximum over
+any 60 s span. It shares no code with the gateway's limiter, so it can catch the gateway being wrong.
 
-**Behaviour above capacity.** Per-model FIFO queue with a bound and a TTL. A full queue rejects new work immediately
-(`429`, state `rejected`); work that waits longer than the TTL becomes `expired`. Every request ends in exactly one of
-`succeeded`, `failed`, `expired`, `rejected`, or is still `queued`/`in_flight`; the reports check that the counts add up.
+## How it works
+**One engine, two drivers.** The `Engine` (per-model queue, limiter, retries) runs behind the HTTP service and behind the
+high-rate benchmark. The HTTP path calls the simulator over the network and is what Scenarios 1 to 4 use. The bulk path runs the engine and
+an in-process simulator inside several worker processes and moves requests in numpy arrays of thousands at a time. Python is
+far too slow to loop per request at a million a second, but is fine when each operation covers a whole chunk.
 
-**Changing limits.** A change is applied to the running limiter immediately. After a *reduction* the previous 60 s of traffic is
-still inside the window, so nothing new is admitted until it drains below the new limit (Scenario 2: about 50 s). The audit
-judges each window against the limit in effect and allows the not-yet-drained old traffic after a reduction; the drop and drain
-are visible in the chart.
+**The limiter.** Usage is counted in 100 ms buckets over a window one bucket longer than 60 s. That way any real 60 s
+interval is covered, which is what makes "no 60 s period goes over the limit" true instead of probable. It costs about 0.17% of
+capacity. A second small bucket (`burst_s`) stops the gateway from sending a whole minute of capacity in one instant; an early
+version did that and froze its own event loop with 10,000 simultaneous calls.
 
-**Retries.** Transient failures are retried up to `max_attempts` and consume capacity each time. A provider `429` means "not
-yet" and re-queues the request without using an attempt.
+**Over capacity.** Each model has its own FIFO queue with a size bound and a time limit. A full queue answers `429`, and a request that
+waits longer than `queue_ttl_s` becomes `expired`. Because the queues and limiters are per model, a constrained model cannot hold up another.
+Every request ends in exactly one state, and the reports check that the counts add up.
 
-**Batches.** A batch is registered and acknowledged at once. Its items are fed to the engine only as fast as a model can clear
-them (about half a TTL's worth of capacity), so they do not expire while waiting behind their own batch, and singles can still
-use the queue. The callback is sent after the last item is final and retried with backoff; delivery is at-least-once with an
-idempotency key.
+**Changing limits.** A change reaches the running limiter at once. After a reduction, the last 60 s of traffic is still inside
+the window, so nothing new is sent until it drains below the new limit. In Scenario 2 that is about 50 seconds with no
+completions for Model A, visible in the chart. The audit judges each 60 s window against the limit in effect at its end and
+lets the old, not yet drained traffic stand after a reduction; it would flag any new traffic sent on top of it.
 
-**Durability, and what is deliberately not durable.** The promise is: *an acknowledged batch is never lost*. Batches are saved before the ack. A single
-request is acknowledged before it is written, so one accepted in the last ~100 ms before a crash can be lost; making it durable first would put a database
-round trip on every request. Per-attempt transitions and rejected requests are not stored (a rejected request was answered with 429). Recovery re-runs
-requests that were in flight, which is why delivery is at-least-once; the idempotency key on the callback lets receivers de-duplicate.
+**Retries.** A transient failure is retried after a delay that doubles each time, with jitter, up to `max_attempts`. Each
+attempt uses capacity again. A provider `429` means "not yet" rather than "failed": the request goes back in the queue
+without using an attempt and that model pauses briefly.
 
-**Replicas split limits instead of sharing a counter.** Each replica enforces its share locally with the same sliding-window limiter, so there is no
-shared-state round trip per request and the limit is respected by construction. The cost: a replica cannot use an idle neighbour's share, and a
-crashed replica's share is unused for a few seconds until its heartbeat expires. A restarted replica's limiter window starts empty (usage is not persisted);
-the provider's own 429s, which the gateway re-queues without using an attempt, are the backstop for that first minute.
+**Batches.** A batch is registered and acknowledged at once. Its requests are handed to the engine only as fast as the
+model can clear them (about half a TTL of capacity), so they don't expire waiting behind the rest of their own batch and
+single requests can still get through. The callback is sent after the last request is final.
 
-**Bulk sharding.** Each of N worker processes owns 1/N of every model's limits and 1/N of the offered load. This is exact and has
-no coordination on the hot path; the price is that a shard cannot borrow an idle neighbour's share (fine for symmetric load,
-see the 10B plan for the real answer).
+**Replicas** split each limit instead of sharing a counter. Every replica enforces its own share with the same limiter, so
+there is no shared state on the request path. The price is that a replica can't borrow a quiet neighbour's share, and a crashed one's share
+sits unused for a few seconds. Bulk worker processes work the same way: each owns 1/N of every limit and 1/N of the load.
 
-**Why not Go (or Rust)?** The measured results do not need it: the scale benchmarks exceed the stretch goal and Scenarios 1-3 are
-limit-bound at about 800 requests/s, while a single Python gateway process handled 6,000 requests/s with the limits removed. A
-second language would add a toolchain for graders to install and split the code for no gain on the required goals. It becomes
-worthwhile at the 10B/min scale, where per-core efficiency is a cost driver (see the report).
+**Why only Python.** The scale benchmarks already pass the stretch goal and Scenarios 1 to 4 are limited by the rate limits (about 800
+requests a second), not by the CPU. With the limits removed, one gateway process handled 6,000 requests a second. A second language would
+add a toolchain for whoever runs this and wouldn't change a required result. It would start to matter at the 10B/min scale, where
+cores cost real money (see the report).
 
-**aiohttp for the hot client.** httpx's connection pool does work proportional to connections × waiting requests on every call,
-which stalled the gateway's event loop for seconds under load, so the gateway and load generator use aiohttp. httpx is kept
-for callbacks (low rate) and in-process tests.
+**Why aiohttp inside the gateway.** httpx's connection pool does work proportional to connections times waiting requests on every call.
+With a few thousand calls in flight it blocked the gateway's event loop for seconds (found by profiling), so the gateway and the load
+generator use aiohttp. httpx stays for callbacks and tests.
 
-## Simulation assumptions
-- The provider is a simulator with lognormal latency (median and shape per model), random transient/permanent failures, and its
-  own sliding-window RPM/TPM limits. No real LLM is called.
-- **HTTP scenarios (1-3):** gateway, provider and load generator are separate processes on one machine, wall-clock time, real HTTP.
-- **Scale benchmarks:** the provider is *in-process* (no network hop, no serialization), requests are generated in-process, and
-  limits are set far above the offered load (the assignment allows higher limits for the high-throughput benchmarks).
-  Completion still means a simulated provider call reached a final state after its latency elapsed in real time.
-- Request counts at 300k+/s are tracked as counters and a latency histogram (1% bins), not as per-request records.
-- Token counts are the `estimated_tokens` supplied by the client; there is no separate token estimator.
+## Gotchas I looked at
+The requirement is easy to meet in the happy case. These are the places it breaks. Each row says what the system does; the
+tests are in `tests/` and several of these were found by probing the running system and then fixed.
+
+| Gotcha | What happens here |
+|---|---|
+| The provider may use a fixed minute, a sliding window or a token bucket | The gateway uses the strictest reading (any 60 s span), which satisfies the others |
+| Sending a minute's worth at the start of a window | Admission is smoothed with a small burst allowance on top of the window |
+| Requests and tokens are separate limits | Both are enforced together; whichever is tighter binds (tested with large requests) |
+| A request needs more tokens than the model's whole budget | `422` at submit. If the limit is lowered later, queued requests that no longer fit fail at once. Before this was fixed, one such request blocked everything behind it |
+| Token counts are estimates | The gateway trusts `estimated_tokens` and keeps 2% headroom. If the provider counts more, it answers `429`, which the gateway absorbs. It does not read real usage back, see known gaps |
+| Gateway counts at send time, provider at arrival | Network delay shifts calls across bucket edges; the 2% headroom covers it. The provider simulator audits independently |
+| Limits change while requests are queued or in flight | Applied immediately; reductions drain as described above; the provider is raised before and lowered after the gateway |
+| Retries use capacity and can stampede a struggling provider | Exponential backoff with jitter, and a provider `429` pauses that model instead of being retried in a loop |
+| A client retries after a timeout | Same `request_id` returns the existing request, also when the two calls overlap and after a restart. `Idempotency-Key` does the same for batches; a reused key with a different body is refused |
+| A request must appear exactly once in a batch result | Ids are unique per batch and across the gateway; results come from one ordered list; checked in Scenarios 3 and 4 |
+| Callback receiver is down, slow or answers an error | Retried with backoff and jitter, timeout 5 s, gives up after 8 attempts but the results stay available through the API |
+| Callback sent twice, or before the batch is done | Sent only after the last request is final. Duplicates are possible after a crash, so the batch id is sent as an idempotency key |
+| Callback URL pointing somewhere private | Optional `callback_allowed_hosts`. Off by default because the demo calls back to localhost, so turn it on when exposing the gateway |
+| The gateway or the machine dies mid-batch | Batches are saved before the ack and adopted by another gateway. Requests in flight run again (at-least-once) |
+| The new gateway forgets what it sent a second ago | Its window starts empty. The provider's own `429` is the safety net for the first minute and is not charged as a failed attempt |
+| Two gateways would double the rate | With Redis each gets a share of the limit; a joining gateway waits before sending; a dead one is detected by its heartbeat |
+| Bad data wedging the database writer | Inputs are validated (id characters, token range, payload size). Payloads are stored as text. If the database still rejects a row, only that row is dropped and logged. Before this was fixed, one oversized number stalled every later write |
+| Unbounded memory | Bounded queues, a 100,000 request batch cap, a 64 KB payload cap, batches fed to the queue gradually. Finished records are not evicted, see known gaps |
+| Unprotected admin endpoints | Optional `ADMIN_TOKEN`. The request API has no authentication at all, which a real deployment needs in front of it |
+| Clock changes | Limits and timeouts use a monotonic clock; wall-clock time is only for timestamps |
+| A provider call times out but may have run | Treated as a transient failure and retried, so the provider may see it twice. Same at-least-once trade as above |
+
+## Assumptions and simulation notes
+- There is one provider account per model, and its limits apply to that model alone. A request counts against both limits when it is sent, and a retry counts again.
+- A request's token cost is `estimated_tokens`, as given by the client.
+- The provider is a simulator: lognormal latency (median and shape per model), random transient and permanent failures, and its own sliding-window limits. No real model is called.
+- Scenarios 1 to 4 run the gateway, the provider and the load generator as separate processes on one machine over real HTTP, on the wall clock.
+- The 300k and 1M runs use an in-process provider (no network, no serialisation) and limits far above the load, as the assignment permits. A request still only
+  counts as completed once its simulated latency has really elapsed. At that rate requests are tracked as counters and a latency histogram, not as records.
+- Latency in Scenarios 1 and 2 is mostly queue wait, because the offered load is above capacity on purpose.
+- All numbers come from one laptop. They show what the design does, not what any other machine will do.
 
 ## Known gaps
-- Single requests are acknowledged before they are written (up to ~100 ms of exposure); only batches are durable at the ack. Rejected requests and per-attempt transitions are not stored.
-- A restarted replica starts with an empty limiter window; the provider's 429s protect the provider during that first minute (the gateway re-queues them without using an attempt).
-- If Redis is down the replicas keep the last known membership and cannot receive limit changes pushed through it; if Postgres is down writes queue in memory and are retried (batches are refused with 503).
-- Records are never evicted from memory (fine for the benchmark durations); with Postgres, memory could be trimmed to open work only.
-- Scale numbers are from one machine; the true ceiling was not found because the shards kept up with the offered load.
-- In Scenarios 1 and 2 the offered load exceeds capacity by design, so latency is mostly queue wait and many requests are rejected or expire; that is the specified over-capacity behaviour, not a defect.
-- The 300k / 1M per second benchmark runs entirely in memory; durability costs are measured separately (see the benchmark report).
+- Single requests are acknowledged before they are written, so one accepted in the last ~100 ms before a crash can be lost. Only batches are durable at the ack. Rejected requests and per-attempt states are not stored.
+- The gateway does not read the provider's real token usage back, so it cannot correct an estimate that was wrong. A provider that counts more than the estimate will push back with `429`; one that counts less leaves capacity unused.
+- A restarted gateway starts with an empty limiter window.
+- If Redis is down, replicas keep the last membership they saw and stop receiving pushed limit changes. If Postgres is down, writes queue in memory and retry, and new batches are refused with `503`.
+- Records are never evicted from memory. Fine for these runs, not for months of uptime. A limit cannot be set to zero to pause a model.
+- The request API has no authentication, no TLS and no per-client quotas.
+- Throughput of several replicas at scale and behaviour during a Postgres or Redis outage were not measured. The scale ceiling on this laptop was not found, because the workers kept up with the load offered.
 
 ## Layout
 ```
-src/common/       config + scenario schemas
-src/gateway/      limiter, queues, engine, HTTP service, batches/callbacks, persistence (Postgres), coordination (Redis)
-src/provider_sim/ provider simulator, HTTP app, independent usage audit, in-process backend
-src/loadgen/      scenario runner (HTTP and bulk), report builder, callback receiver, charts, demo console (console.py + console.html)
-scenarios/        one YAML per scenario / benchmark
-docker-compose.yml  optional Postgres + Redis
-scripts/          run_all.sh
-reports/          BENCHMARK.md and the result files it cites
-tests/            33 tests (limiter, engine, service, callbacks, bulk, end-to-end, persistence/recovery/replicas)
+src/common/         config and scenario schemas
+src/gateway/        limiter, queues, engine, HTTP service, batches and callbacks, persistence, coordination
+src/provider_sim/   provider simulator, its HTTP app, the independent audit, the in-process backend
+src/loadgen/        scenario runner (HTTP and bulk), reports, callback receiver, charts, demo console
+scenarios/          one YAML per scenario and benchmark
+scripts/            run_all.sh
+reports/            BENCHMARK.md and the result files it cites
+tests/              46 tests: limiter, engine, service, callbacks, bulk, end to end, persistence, console
+docker-compose.yml  optional Postgres and Redis
 ```

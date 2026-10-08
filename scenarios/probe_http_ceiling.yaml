@@ -1,4 +1,7 @@
 name: http-ceiling-probe
+description: >
+  Not a pass/fail scenario. Takes the rate limits out of the way and offers 6,000 requests/s to the HTTP gateway to see
+  whether one gateway process keeps up (it did: 6,000/s completed, no errors). The result is a floor, not a ceiling.
 mode: http
 kind: generic
 duration_s: 20

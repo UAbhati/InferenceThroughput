@@ -52,6 +52,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
   th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
   td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  button.copy-id { padding: 2px 6px; margin-left: 5px; font-size: 11px; }
   .bar { height: 8px; background: var(--soft); border-radius: 4px; overflow: hidden; min-width: 90px; }
   .bar > div { height: 100%; background: var(--blue); }
   .ok { color: var(--green); font-weight: 600; } .no { color: var(--red); font-weight: 600; } .wait { color: var(--amber); font-weight: 600; }
@@ -135,6 +136,18 @@ const fmt = n => n == null ? "-" : Math.round(n).toLocaleString();
 const hist = {};            // model -> {t:[], win:[], done:[], limit:[]}
 let last = null, models = [], built = false, lastBatchStates = {}, lastCbCount = 0, lastLimits = {};
 const MAXPTS = 150;
+
+async function copyId(button) {
+  const id = button.dataset.copyId;
+  try {
+    await navigator.clipboard.writeText(id);
+    const label = button.textContent;
+    button.textContent = "✓";
+    setTimeout(() => { button.textContent = label; }, 1200);
+  } catch {
+    window.prompt("Copy this batch ID:", id);
+  }
+}
 
 async function api(method, path, body) {
   const r = await fetch(path, {method, headers: {"content-type": "application/json"}, body: body ? JSON.stringify(body) : undefined});
@@ -250,12 +263,12 @@ function render(st) {
     const done = b.total ? (b.succeeded + b.failed) : 0, pct = b.total ? 100 * done / b.total : 0, cb = b.callback || {};
     const cbTxt = cb.status === "delivered" ? `<span class="ok">delivered (${cb.attempts} attempt${cb.attempts > 1 ? "s" : ""})</span>`
       : cb.status === "retrying" ? `<span class="wait">retrying · attempt ${cb.attempts}</span>` : cb.status === "failed" ? `<span class="no">gave up</span>` : `<span style="color:var(--muted)">${cb.status || "-"}</span>`;
-    return `<tr><td>${b.id.slice(0, 8)}</td><td>${b.ack_ms} ms</td><td><div class="bar"><div style="width:${pct}%"></div></div></td><td>${fmt(done)} / ${fmt(b.total)}</td>
+    return `<tr><td><code>${b.id}</code><button class="copy-id" data-copy-id="${b.id}" onclick="copyId(this)" title="Copy batch ID" aria-label="Copy batch ID">⧉</button></td><td>${b.ack_ms} ms</td><td><div class="bar"><div style="width:${pct}%"></div></div></td><td>${fmt(done)} / ${fmt(b.total)}</td>
       <td>${fmt(b.failed)}</td><td>${b.status || "-"}</td><td>${cbTxt}</td></tr>`; });
   $("batches").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="7" style="color:var(--muted)">No batches yet.</td></tr>`;
   (st.batches || []).forEach(b => { const prev = lastBatchStates[b.id]; if (prev && prev !== b.status && b.status !== "processing") log(`<b>batch ${b.id.slice(0, 8)}</b> all requests final: ${b.succeeded} succeeded, ${b.failed} failed`); lastBatchStates[b.id] = b.status; });
   const cbs = (st.callbacks || []).slice().reverse();
-  $("callbacks").innerHTML = cbs.length ? cbs.map(c => `<tr><td>${new Date(c.t * 1000).toLocaleTimeString()}</td><td>${(c.batch_id || "").slice(0, 8)}</td>
+  $("callbacks").innerHTML = cbs.length ? cbs.map(c => `<tr><td>${new Date(c.t * 1000).toLocaleTimeString()}</td><td><code>${c.batch_id || ""}</code><button class="copy-id" data-copy-id="${c.batch_id || ""}" onclick="copyId(this)" title="Copy batch ID" aria-label="Copy batch ID">⧉</button></td>
     <td class="${c.status_code === 200 ? "ok" : "no"}">${c.status_code === 200 ? "200 accepted" : c.status_code + " refused"}</td><td>${fmt(c.total)}</td><td>${fmt(c.succeeded)}</td><td>${fmt(c.failed)}</td></tr>`).join("")
     : `<tr><td colspan="6" style="color:var(--muted)">None yet.</td></tr>`;
   if ((st.callbacks || []).length > lastCbCount) { const c = st.callbacks[st.callbacks.length - 1]; log(`<b>callback</b> for ${(c.batch_id || "").slice(0, 8)} ${c.status_code === 200 ? "accepted" : "refused (" + c.status_code + ")"}`); }

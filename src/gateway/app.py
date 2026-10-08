@@ -41,12 +41,12 @@ class RequestIn(BaseModel):
 class BatchIn(BaseModel):
     requests: list[RequestIn] = Field(min_length=1)
     callback_url: AnyHttpUrl | None = Field(default=None, description="called once every request in the batch is final",
-                                            examples=["http://127.0.0.1:8080/callback-app/callback"])
+                                            examples=["http://127.0.0.1:8082/callback-app/callback"])
 
     model_config = {"json_schema_extra": {"examples": [{
         "requests": [{"request_id": "demo-1", "model": "model-a", "estimated_tokens": 1000, "payload": {"prompt": "hi"}},
                      {"request_id": "demo-2", "model": "model-b", "estimated_tokens": 1500}],
-        "callback_url": "http://127.0.0.1:8080/callback-app/callback"}]}}
+        "callback_url": "http://127.0.0.1:8082/callback-app/callback"}]}}
 
 
 class LimitsIn(BaseModel):

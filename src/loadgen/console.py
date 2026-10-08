@@ -1,6 +1,6 @@
 """Demo console: one command starts the provider and the gateway and serves a single page to drive and watch them.
 
-    python -m loadgen.console [--models config/models.yaml] [--port 8080]
+    python -m loadgen.console [--models config/models.yaml] [--port 8082]
 
 The page shows live throughput against each model's limit and lets you start/stop load, change limits while it
 runs, send a batch with a callback, make the callback receiver refuse its first attempts, inject provider failures,
@@ -288,7 +288,7 @@ def create_console(models_path: str, port: int, out: Path | None = None) -> Fast
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", default="config/models.yaml")
-    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--port", type=int, default=8082)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
     app = create_console(args.models, args.port)

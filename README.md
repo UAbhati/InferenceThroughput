@@ -48,7 +48,7 @@ the virtual environment, run:
 
 ```bash
 source .venv/bin/activate          # if not activated, if already activated then ignore this
-python -m loadgen.console          # then open http://127.0.0.1:8080
+python -m loadgen.console          # then open http://127.0.0.1:8082
 ```
 
 From the page you can start and stop load, change a model's limits while it runs, send a batch with a callback (and make the

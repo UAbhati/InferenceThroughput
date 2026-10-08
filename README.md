@@ -48,8 +48,14 @@ the virtual environment, run:
 
 ```bash
 source .venv/bin/activate          # if not activated, if already activated then ignore this
+# Optional: include Postgres durability and Redis replica coordination for the crash-recovery demo.
+docker compose up -d
+set -a; source .env; set +a         # exports DATABASE_URL and REDIS_URL for this shell
 python -m loadgen.console          # then open http://127.0.0.1:8082
 ```
+
+Leave out the two optional commands above to run the console fully in memory. The `.env` file is local and git-ignored;
+copy `.env.example` to recreate it on another machine.
 
 From the page you can start and stop load, change a model's limits while it runs, send a batch with a callback (and make the
 receiver refuse the first few attempts), inject provider failures, and, if Postgres is on, kill the gateway and restart it.

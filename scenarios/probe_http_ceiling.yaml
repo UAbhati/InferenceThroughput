@@ -1,0 +1,10 @@
+name: http-ceiling-probe
+mode: http
+kind: generic
+duration_s: 20
+warmup_s: 8
+drain_s: 20
+models:
+  model-a: {rpm: 100000000, tpm: 100000000000, latency_ms_median: 50, latency_sigma: 0.2}
+load: {rate_per_s: 6000, mix: {model-a: 1.0}, token_size: 1000}
+engine: {queue_max: 500000, queue_ttl_s: 30, headroom: 1.0}

@@ -1,0 +1,586 @@
+{
+ "scenario": "s3-batch-callback",
+ "description": "Scenario 3. One asynchronous batch of 10,000 requests across two models, with simulated transient and permanent failures. The callback receiver refuses the first two delivery attempts.\n",
+ "mode": "http (gateway and provider simulator as separate processes, wall clock)",
+ "environment": {
+  "python": "3.14.7",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "cpu_count": 12,
+  "shards": 1,
+  "wall_s": 17.0
+ },
+ "config": {
+  "duration_s": 120.0,
+  "warmup_s": 0.0,
+  "offered_rate_per_s": null,
+  "mix": null,
+  "token_size": null,
+  "engine": {
+   "queue_max": 100000,
+   "queue_ttl_s": 60.0,
+   "max_attempts": 3,
+   "headroom": 0.98,
+   "tick_s": 0.005,
+   "burst_s": 0.25
+  },
+  "models": {
+   "model-a": {
+    "rpm": 30000,
+    "tpm": 60000000,
+    "latency_ms_median": 300.0,
+    "latency_sigma": 0.4,
+    "transient_failure_rate": 0.15,
+    "permanent_failure_rate": 0.03
+   },
+   "model-b": {
+    "rpm": 20000,
+    "tpm": 40000000,
+    "latency_ms_median": 500.0,
+    "latency_sigma": 0.4,
+    "transient_failure_rate": 0.1,
+    "permanent_failure_rate": 0.02
+   }
+  }
+ },
+ "limit_changes": [],
+ "models": {
+  "model-a": {
+   "configured": {
+    "rpm": 30000,
+    "tpm": 60000000
+   },
+   "totals": {
+    "submitted": 6074,
+    "rejected": 0,
+    "completed": 6074,
+    "succeeded": 5815,
+    "failed": 259,
+    "expired": 0,
+    "retried": 1066,
+    "completed_tokens": 6074000,
+    "waiting_at_end": 0,
+    "in_flight_at_end": 0,
+    "unaccounted": 0
+   },
+   "steady_state": {
+    "window_s": [
+     0,
+     120
+    ],
+    "completed": 6074,
+    "observed_rpm": 3037,
+    "observed_tpm": 3037000,
+    "rpm_utilisation": 0.1012,
+    "tpm_utilisation": 0.0506
+   },
+   "latency_s": {
+    "p50": 7.3795,
+    "p95": 13.9507,
+    "p99": 14.5171
+   },
+   "limit_audit": {
+    "rpm": {
+     "max_window": 7140,
+     "worst_ratio": 0.238,
+     "worst_at_s": 15.25,
+     "ok": true
+    },
+    "tpm": {
+     "max_window": 7140000,
+     "worst_ratio": 0.119,
+     "worst_at_s": 15.25,
+     "ok": true
+    }
+   },
+   "timeline": [
+    {
+     "t": 1,
+     "completed_per_s": 368,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 597
+    },
+    {
+     "t": 2,
+     "completed_per_s": 402,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1088
+    },
+    {
+     "t": 3,
+     "completed_per_s": 427,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1577
+    },
+    {
+     "t": 4,
+     "completed_per_s": 428,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2068
+    },
+    {
+     "t": 5,
+     "completed_per_s": 407,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2557
+    },
+    {
+     "t": 6,
+     "completed_per_s": 413,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3047
+    },
+    {
+     "t": 7,
+     "completed_per_s": 425,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3538
+    },
+    {
+     "t": 8,
+     "completed_per_s": 409,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4028
+    },
+    {
+     "t": 9,
+     "completed_per_s": 428,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4517
+    },
+    {
+     "t": 10,
+     "completed_per_s": 421,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 5004
+    },
+    {
+     "t": 11,
+     "completed_per_s": 425,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 5497
+    },
+    {
+     "t": 12,
+     "completed_per_s": 406,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 5988
+    },
+    {
+     "t": 13,
+     "completed_per_s": 430,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 6478
+    },
+    {
+     "t": 14,
+     "completed_per_s": 406,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 6966
+    },
+    {
+     "t": 15,
+     "completed_per_s": 271,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7138
+    },
+    {
+     "t": 16,
+     "completed_per_s": 8,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7140
+    },
+    {
+     "t": 17,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7140
+    },
+    {
+     "t": 18,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7140
+    },
+    {
+     "t": 19,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 7140
+    }
+   ]
+  },
+  "model-b": {
+   "configured": {
+    "rpm": 20000,
+    "tpm": 40000000
+   },
+   "totals": {
+    "submitted": 3926,
+    "rejected": 0,
+    "completed": 3926,
+    "succeeded": 3842,
+    "failed": 84,
+    "expired": 0,
+    "retried": 461,
+    "completed_tokens": 3926000,
+    "waiting_at_end": 0,
+    "in_flight_at_end": 0,
+    "unaccounted": 0
+   },
+   "steady_state": {
+    "window_s": [
+     0,
+     120
+    ],
+    "completed": 3926,
+    "observed_rpm": 1963,
+    "observed_tpm": 1963000,
+    "rpm_utilisation": 0.0982,
+    "tpm_utilisation": 0.0491
+   },
+   "latency_s": {
+    "p50": 7.0916,
+    "p95": 13.0121,
+    "p99": 13.6758
+   },
+   "limit_audit": {
+    "rpm": {
+     "max_window": 4336,
+     "worst_ratio": 0.2168,
+     "worst_at_s": 14.09,
+     "ok": true
+    },
+    "tpm": {
+     "max_window": 4336000,
+     "worst_ratio": 0.1084,
+     "worst_at_s": 14.09,
+     "ok": true
+    }
+   },
+   "timeline": [
+    {
+     "t": 1,
+     "completed_per_s": 147,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 347
+    },
+    {
+     "t": 2,
+     "completed_per_s": 300,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 673
+    },
+    {
+     "t": 3,
+     "completed_per_s": 293,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1000
+    },
+    {
+     "t": 4,
+     "completed_per_s": 297,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1328
+    },
+    {
+     "t": 5,
+     "completed_per_s": 295,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1654
+    },
+    {
+     "t": 6,
+     "completed_per_s": 287,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 1980
+    },
+    {
+     "t": 7,
+     "completed_per_s": 299,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2308
+    },
+    {
+     "t": 8,
+     "completed_per_s": 302,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2634
+    },
+    {
+     "t": 9,
+     "completed_per_s": 295,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 2960
+    },
+    {
+     "t": 10,
+     "completed_per_s": 292,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3283
+    },
+    {
+     "t": 11,
+     "completed_per_s": 295,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3613
+    },
+    {
+     "t": 12,
+     "completed_per_s": 319,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 3941
+    },
+    {
+     "t": 13,
+     "completed_per_s": 281,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4267
+    },
+    {
+     "t": 14,
+     "completed_per_s": 208,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4334
+    },
+    {
+     "t": 15,
+     "completed_per_s": 16,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4336
+    },
+    {
+     "t": 16,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4336
+    },
+    {
+     "t": 17,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4336
+    },
+    {
+     "t": 18,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4336
+    },
+    {
+     "t": 19,
+     "completed_per_s": 0,
+     "rejected_per_s": 0,
+     "expired_per_s": 0,
+     "provider_rpm_trailing_60s": 4336
+    }
+   ]
+  }
+ },
+ "overall": {
+  "totals": {
+   "submitted": 10000,
+   "rejected": 0,
+   "completed": 10000,
+   "succeeded": 9657,
+   "failed": 343,
+   "expired": 0,
+   "retried": 1527,
+   "completed_tokens": 10000000
+  },
+  "steady_completed_per_s": 83,
+  "latency_s": {
+   "p50": 7.2341,
+   "p95": 13.5404,
+   "p99": 14.3734
+  },
+  "all_requests_accounted": true,
+  "all_limits_respected": true
+ },
+ "batch": {
+  "requests": 10000,
+  "ack_latency_s": 0.026,
+  "time_from_ack_to_all_final_s": 15.48,
+  "callback_attempts": [
+   {
+    "at_s_after_ack": 15.5,
+    "status_code": 503
+   },
+   {
+    "at_s_after_ack": 15.92,
+    "status_code": 503
+   },
+   {
+    "at_s_after_ack": 16.76,
+    "status_code": 200
+   }
+  ],
+  "callback_final_status": "delivered",
+  "batch_status": "completed_with_failures",
+  "summary": {
+   "batch_id": "ff3be7ca54a3430092b4e57cb13398f8",
+   "status": "completed_with_failures",
+   "total": 10000,
+   "succeeded": 9657,
+   "failed": 343,
+   "expired": 0
+  },
+  "request_states": {
+   "succeeded": 9657,
+   "failed": 343
+  },
+  "progress_samples": [
+   {
+    "t": 0.01,
+    "final": 0,
+    "callback": "pending"
+   },
+   {
+    "t": 1.03,
+    "final": 557,
+    "callback": "pending"
+   },
+   {
+    "t": 2.06,
+    "final": 1286,
+    "callback": "pending"
+   },
+   {
+    "t": 3.08,
+    "final": 2010,
+    "callback": "pending"
+   },
+   {
+    "t": 4.1,
+    "final": 2744,
+    "callback": "pending"
+   },
+   {
+    "t": 5.13,
+    "final": 3476,
+    "callback": "pending"
+   },
+   {
+    "t": 6.15,
+    "final": 4199,
+    "callback": "pending"
+   },
+   {
+    "t": 7.17,
+    "final": 4936,
+    "callback": "pending"
+   },
+   {
+    "t": 8.2,
+    "final": 5653,
+    "callback": "pending"
+   },
+   {
+    "t": 9.22,
+    "final": 6391,
+    "callback": "pending"
+   },
+   {
+    "t": 10.24,
+    "final": 7118,
+    "callback": "pending"
+   },
+   {
+    "t": 11.25,
+    "final": 7867,
+    "callback": "pending"
+   },
+   {
+    "t": 12.27,
+    "final": 8579,
+    "callback": "pending"
+   },
+   {
+    "t": 13.29,
+    "final": 9308,
+    "callback": "pending"
+   },
+   {
+    "t": 14.32,
+    "final": 9866,
+    "callback": "pending"
+   },
+   {
+    "t": 15.34,
+    "final": 9996,
+    "callback": "pending"
+   },
+   {
+    "t": 16.37,
+    "final": 10000,
+    "callback": "retrying"
+   }
+  ]
+ },
+ "checks": {
+  "ack_within_1s": {
+   "ok": true,
+   "detail": "26 ms for 10,000 requests"
+  },
+  "callback_sent_only_after_all_final": {
+   "ok": true,
+   "detail": "all-final at +15.48s, first callback attempt at +15.50s"
+  },
+  "first_attempts_rejected_then_delivered": {
+   "ok": true,
+   "detail": "attempt status codes [503, 503, 200], gateway reports 'delivered' after 3 attempts"
+  },
+  "callback_summary_matches_batch_status": {
+   "ok": true,
+   "detail": "callback {'batch_id': 'ff3be7ca54a3430092b4e57cb13398f8', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9657, 'failed': 343, 'expired': 0} vs API {'batch_id': 'ff3be7ca54a3430092b4e57cb13398f8', 'status': 'completed_with_failures', 'total': 10000, 'succeeded': 9657, 'failed': 343, 'expired': 0}"
+  },
+  "every_request_id_exactly_once": {
+   "ok": true,
+   "detail": "10,000 result rows, 10,000 distinct ids, 10,000 submitted"
+  },
+  "transient_and_permanent_failures_present": {
+   "ok": true,
+   "detail": "states {'succeeded': 9657, 'failed': 343}; retry attempts 1,527"
+  },
+  "no_60s_window_over_limit": {
+   "ok": true,
+   "detail": "provider audit"
+  }
+ }
+}

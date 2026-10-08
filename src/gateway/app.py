@@ -2,7 +2,7 @@
 
     uvicorn gateway.app:app --port 8000
     env: GATEWAY_MODELS (default config/models.yaml), PROVIDER_URL (default http://127.0.0.1:8001),
-         GATEWAY_PUBLIC_URL (used in results_url), REDIS_URL / DATABASE_URL (optional, see README)
+         GATEWAY_PUBLIC_URL (used in results_url)
 """
 from __future__ import annotations
 

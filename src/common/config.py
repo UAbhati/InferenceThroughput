@@ -22,6 +22,9 @@ class EngineConfig(BaseModel):
     queue_max: int = Field(default=100_000, gt=0, description="bounded queue per model; beyond it submits are rejected")
     queue_ttl_s: float = Field(default=30.0, gt=0, description="a request still queued after this long expires")
     max_attempts: int = Field(default=3, ge=1, description="attempts per request incl. retries of transient failures")
+    retry_backoff_s: float = Field(default=0.25, ge=0, description="first retry waits about this long, doubling each attempt, with jitter")
+    retry_backoff_cap_s: float = Field(default=5.0, ge=0)
+    rate_limited_pause_s: float = Field(default=0.5, ge=0, description="a provider 429 pauses that model's dispatch for this long")
     headroom: float = Field(default=1.0, gt=0, le=1, description="fraction of the provider limit the gateway uses")
     tick_s: float = Field(default=0.005, gt=0, description="dispatch loop period")
     burst_s: float = Field(default=0.25, gt=0, description="smoothing: never send more than this many seconds of "
@@ -40,6 +43,8 @@ class GatewayConfig(BaseModel):
     callback_timeout_s: float = 5.0
     callback_inline_results_max: int = 100
     provider_timeout_s: float = 60.0
+    max_payload_bytes: int = Field(default=65_536, gt=0, description="per request, as JSON")
+    callback_allowed_hosts: list[str] | None = Field(default=None, description="if set, callback URLs must use one of these hosts")
 
 
 class ModelsConfig(BaseModel):

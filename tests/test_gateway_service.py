@@ -149,3 +149,66 @@ async def test_limits_change_at_runtime_through_api_and_models_are_independent()
         await asyncio.sleep(0.5)
         assert rig.sim.audit.max_60s("a")[0] == a_before  # nothing more admitted for a: window still holds old traffic
         assert rig.gw.status()["limit_changes"][0]["model"] == "a"
+
+
+# ---- gotchas: oversize, validation, idempotency, admin access, callback targets -----------------------------------
+
+async def test_request_larger_than_the_models_token_budget_is_refused_up_front():
+    models = {"a": ModelSpec(rpm=600_000, tpm=5_000, latency_ms_median=5, latency_sigma=0)}
+    async with Rig(models) as rig:
+        r = await rig.client.post("/v1/requests", json={"request_id": "huge", "model": "a", "estimated_tokens": 50_000})
+        assert r.status_code == 422 and r.json()["detail"]["error"] == "request_too_large"
+        assert "huge" not in rig.gw.registry.by_id  # nothing was queued behind which others could wait
+        ok = await rig.client.post("/v1/requests", json={"request_id": "fine", "model": "a", "estimated_tokens": 500})
+        assert ok.status_code == 202
+        batch = await rig.client.post("/v1/batches", json={"requests": [{"request_id": "b1", "model": "a"}, {"request_id": "b2", "model": "a", "estimated_tokens": 99_999}]})
+        assert batch.status_code == 422 and not rig.gw.batches  # all or nothing
+
+
+async def test_input_validation():
+    async with Rig(specs()) as rig:
+        post = lambda **kw: rig.client.post("/v1/requests", json={"model": "a", **kw})
+        assert (await post(request_id="has space")).status_code == 422
+        assert (await post(request_id="x" * 129)).status_code == 422
+        assert (await post(estimated_tokens=0)).status_code == 422
+        assert (await post(estimated_tokens=20_000_000)).status_code == 422
+        assert (await post(payload={"blob": "x" * 70_000})).status_code == 422
+        assert (await post(request_id="ok.id:1@host/2-x", payload={"nested": [1, 2, {"a": None}]})).status_code == 202
+        assert (await rig.client.post("/v1/requests/status", json={"ids": ["i"] * 10_001})).status_code == 422
+
+
+async def test_batch_idempotency_key_makes_a_retried_post_return_the_same_batch():
+    async with Rig(specs()) as rig:
+        body = {"requests": [{"model": "a"}] * 5}
+        h = {"Idempotency-Key": "client-retry-1"}
+        first = await rig.client.post("/v1/batches", json=body, headers=h)
+        again = await rig.client.post("/v1/batches", json=body, headers=h)
+        assert first.status_code == 202 and first.json()["created"] is True
+        assert again.status_code == 200 and again.json()["created"] is False and again.json()["batch_id"] == first.json()["batch_id"]
+        assert len(rig.gw.batches) == 1
+        other = await rig.client.post("/v1/batches", json={"requests": [{"model": "b"}]}, headers=h)
+        assert other.status_code == 422  # same key, different batch: refused rather than silently ignored
+        twins = await asyncio.gather(*[rig.client.post("/v1/batches", json=body, headers={"Idempotency-Key": "k2"}) for _ in range(4)])
+        assert len({t.json()["batch_id"] for t in twins}) == 1 and len(rig.gw.batches) == 2
+
+
+async def test_admin_endpoints_need_the_token_when_one_is_configured(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "s3cret")
+    async with Rig(specs()) as rig:
+        assert (await rig.client.get("/admin/status")).status_code == 401
+        assert (await rig.client.put("/admin/models/a/limits", json={"rpm": 5})).status_code == 401
+        assert (await rig.client.get("/admin/status", headers={"Authorization": "Bearer wrong"})).status_code == 401
+        good = {"Authorization": "Bearer s3cret"}
+        assert (await rig.client.get("/admin/status", headers=good)).status_code == 200
+        assert (await rig.client.put("/admin/models/a/limits", json={"rpm": 5000}, headers=good)).status_code == 200
+        assert (await rig.client.post("/v1/requests", json={"model": "a"})).status_code == 202  # the data plane stays open
+        assert (await rig.client.get("/healthz")).status_code == 200
+
+
+async def test_callback_hosts_can_be_restricted():
+    gw_cfg = GatewayConfig(callback_allowed_hosts=["sink"], callback_backoff_base_s=0.05)
+    async with Rig(specs(), gateway=gw_cfg) as rig:
+        bad = await rig.client.post("/v1/batches", json={"requests": [{"model": "a"}], "callback_url": "http://169.254.169.254/latest"})
+        assert bad.status_code == 422 and not rig.gw.batches
+        good = await rig.client.post("/v1/batches", json={"requests": [{"model": "a"}], "callback_url": "http://sink/cb"})
+        assert good.status_code == 202

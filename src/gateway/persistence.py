@@ -46,13 +46,21 @@ CREATE TABLE IF NOT EXISTS requests (
     idx int NOT NULL DEFAULT 0,
     model text NOT NULL,
     tokens int NOT NULL,
-    payload jsonb,
+    payload text,
     state text NOT NULL,
     attempts int NOT NULL DEFAULT 0,
     error text,
     accepted_at double precision NOT NULL,
     finished_at double precision
 );
+DO $$ BEGIN
+    IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'requests' AND column_name = 'payload') = 'jsonb' THEN
+        ALTER TABLE requests ALTER COLUMN payload TYPE text USING payload::text;
+    END IF;
+END $$;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS idem_key text;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS idem_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS batches_idem_key ON batches (idem_key) WHERE idem_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS requests_batch_idx ON requests (batch_id, idx);
 CREATE INDEX IF NOT EXISTS requests_open_owner ON requests (owner) WHERE state IN ('queued', 'in_flight');
 CREATE INDEX IF NOT EXISTS batches_open_owner ON batches (owner) WHERE status = 'processing' OR cb_status IN ('pending', 'delivering', 'retrying');
@@ -67,8 +75,8 @@ CREATE TABLE IF NOT EXISTS model_limits (
 REQ_COLS = ("id", "owner", "batch_id", "idx", "model", "tokens", "payload", "state", "attempts", "error", "accepted_at", "finished_at")
 REQ_TYPES = ("text", "text", "text", "int", "text", "int", "text", "text", "int", "text", "float8", "float8")
 BATCH_COLS = ("id", "owner", "callback_url", "status", "total", "succeeded", "failed", "expired", "created_at", "completed_at",
-              "cb_status", "cb_attempts", "cb_last_error", "cb_delivered_at")
-BATCH_TYPES = ("text", "text", "text", "text", "int", "int", "int", "int", "float8", "float8", "text", "int", "text", "float8")
+              "cb_status", "cb_attempts", "cb_last_error", "cb_delivered_at", "idem_key", "idem_hash")
+BATCH_TYPES = ("text", "text", "text", "text", "int", "int", "int", "int", "float8", "float8", "text", "int", "text", "float8", "text", "text")
 
 
 def _unnest_sql(table: str, cols, types, update_cols) -> str:
@@ -76,7 +84,7 @@ def _unnest_sql(table: str, cols, types, update_cols) -> str:
     names = ", ".join(f"u{i}" for i in range(len(cols)))
     sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
     return (f"INSERT INTO {table} ({', '.join(cols)}) "
-            f"SELECT {', '.join(('u%d::jsonb' % i) if c == 'payload' else 'u%d' % i for i, c in enumerate(cols))} "
+            f"SELECT {', '.join('u%d' % i for i in range(len(cols)))} "
             f"FROM unnest({args}) AS t({names}) ON CONFLICT (id) DO UPDATE SET {sets}")
 
 
@@ -98,6 +106,7 @@ class NullPersistence:
     def put_batch(self, row): ...
     async def insert_batch(self, batch_row, req_rows): ...
     async def get_request(self, rid): return None
+    async def find_batch_by_key(self, key): return None
     async def get_batch(self, bid): return None
     async def batch_results(self, bid, offset, limit): return None
     async def limits(self): return {}
@@ -118,6 +127,7 @@ class Persistence:
         self._task: asyncio.Task | None = None
         self.flush_errors = 0
         self.rows_written = 0
+        self.rows_dropped = 0
 
     async def start(self) -> None:
         import asyncpg  # optional dependency
@@ -150,6 +160,13 @@ class Persistence:
 
     async def insert_batch(self, batch_row: tuple, req_rows: list[tuple]) -> None:
         """Durable insert, awaited before the batch is acknowledged. Raises on a duplicate id."""
+        import asyncpg
+        try:
+            await self._insert_batch(batch_row, req_rows)
+        except asyncpg.UniqueViolationError as e:
+            raise DuplicateKey(str(e)) from e
+
+    async def _insert_batch(self, batch_row: tuple, req_rows: list[tuple]) -> None:
         async with self._pool.acquire() as c, c.transaction():
             await c.execute(UPSERT_BATCHES, *[[v] for v in batch_row])
             for i in range(0, len(req_rows), self.max_flush_rows):
@@ -176,26 +193,46 @@ class Persistence:
         batches, self._batch = self._batch, {}
         try:
             async with self._pool.acquire() as c:
-                if batches:
-                    cols = list(zip(*batches.values()))
-                    await c.execute(UPSERT_BATCHES, *[list(col) for col in cols])
+                await self._write(c, UPSERT_BATCHES, list(batches.values()))
                 rows = list(reqs.values())
                 for i in range(0, len(rows), self.max_flush_rows):
-                    cols = list(zip(*rows[i:i + self.max_flush_rows]))
-                    await c.execute(UPSERT_REQUESTS, *[list(col) for col in cols])
+                    await self._write(c, UPSERT_REQUESTS, rows[i:i + self.max_flush_rows])
             self.rows_written += len(reqs) + len(batches)
         except Exception:
-            for k, v in reqs.items():  # put back, without overwriting anything newer
+            for k, v in reqs.items():  # connection trouble: put everything back, without overwriting anything newer
                 self._req.setdefault(k, v)
             for k, v in batches.items():
                 self._batch.setdefault(k, v)
             raise
+
+    async def _write(self, c, sql: str, rows: list[tuple]) -> None:
+        """One statement for the rows. If the database rejects the *data* (not the connection), halve the group until
+        the offending row is found and drop only that one, so a single bad row cannot block every write behind it."""
+        if not rows:
+            return
+        try:
+            await c.execute(sql, *[list(col) for col in zip(*rows)])
+        except Exception as e:
+            if not is_data_error(e):
+                raise
+            if len(rows) == 1:
+                self.rows_dropped += 1
+                log.error("dropping a row the database rejects (id=%s): %s", rows[0][0], e)
+                return
+            mid = len(rows) // 2
+            await self._write(c, sql, rows[:mid])
+            await self._write(c, sql, rows[mid:])
 
     # ---- reads -----------------------------------------------------------------------------------------------
     async def get_request(self, rid: str) -> dict | None:
         await self.flush_quietly()
         async with self._pool.acquire() as c:
             row = await c.fetchrow("SELECT * FROM requests WHERE id = $1", rid)
+        return dict(row) if row else None
+
+    async def find_batch_by_key(self, key: str) -> dict | None:
+        async with self._pool.acquire() as c:
+            row = await c.fetchrow("SELECT id, idem_hash FROM batches WHERE idem_key = $1", key)
         return dict(row) if row else None
 
     async def get_batch(self, bid: str) -> dict | None:
@@ -272,6 +309,18 @@ class Persistence:
 
 class DuplicateId(Exception):
     pass
+
+
+class DuplicateKey(Exception):
+    """The idempotency key (or batch id) is already stored."""
+
+
+def is_data_error(e: Exception) -> bool:
+    """True when the database or driver refused the *value* (out of range, bad encoding, constraint), not the connection."""
+    import asyncpg
+    if isinstance(e, asyncpg.DataError):
+        return True
+    return isinstance(e, asyncpg.PostgresError) and (getattr(e, "sqlstate", "") or "")[:2] in ("22", "23")
 
 
 def encode_payload(payload) -> str:

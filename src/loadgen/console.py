@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from common.config import ModelsConfig
 from common.scenario import Scenario
 from loadgen.callback_sink import create_sink
-from loadgen.http_run import Stack, free_port
+from loadgen.http_run import Stack, auth_headers, free_port
 
 
 class LoadIn(BaseModel):
@@ -149,7 +149,7 @@ def create_console(models_path: str, port: int, out: Path | None = None) -> Fast
         await asyncio.to_thread(stack.start)
         ctx["stack"] = stack
         gw_url, pv_url = stack.urls
-        ctx["gw"] = httpx.AsyncClient(base_url=gw_url, timeout=30)
+        ctx["gw"] = httpx.AsyncClient(base_url=gw_url, timeout=30, headers=auth_headers())
         ctx["pv"] = httpx.AsyncClient(base_url=pv_url, timeout=30)
         ctx["session"] = aiohttp.ClientSession(gw_url, timeout=aiohttp.ClientTimeout(total=30), connector=aiohttp.TCPConnector(limit=2000))
         ctx["load"] = LiveLoad(ctx["session"])

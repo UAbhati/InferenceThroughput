@@ -1,7 +1,9 @@
 """Gateway engine: per-model bounded queues -> rate limiter -> provider -> final states.
 
     submit()  ->  queued --(limiter admits)--> in flight --> succeeded | failed
-                     |                              |-- transient failure -> queued again (up to max_attempts)
+                     |                              |-- transient failure -> wait (backoff + jitter) -> queued again (up to max_attempts)
+                     |                              `-- provider 429 -> queued again, that model pauses briefly
+                     |-- larger than the model's whole token budget -> failed at once (it could never be sent)
                      `-- ttl exceeded -> expired
     submit() into a full queue -> rejected (returned to the caller, never queued)
 
@@ -13,6 +15,8 @@ never slows another.
 """
 from __future__ import annotations
 
+import heapq
+import random
 from typing import Protocol
 
 import numpy as np
@@ -21,7 +25,7 @@ from common.config import EngineConfig, ModelSpec
 from gateway.limiter import SlidingWindowLimiter
 from gateway.queueing import Chunk, ChunkQueue
 
-OK, TRANSIENT, PERMANENT, RATE_LIMITED = 0, 1, 2, 3  # provider outcome codes
+OK, TRANSIENT, PERMANENT, RATE_LIMITED, TOO_LARGE = 0, 1, 2, 3, 4  # outcome codes (TOO_LARGE is decided by the gateway)
 
 
 class Provider(Protocol):
@@ -50,6 +54,11 @@ class Engine:
         self.in_flight = {m: 0 for m in specs}
         self._credit = {m: self._credit_cap(m) for m in specs}  # smoothing: requests we may send right now
         self._credit_at: float | None = None
+        self._delayed: list[tuple] = []  # retries waiting out their backoff: (ready_at, tiebreak, model, chunk)
+        self._delayed_n = {m: 0 for m in specs}
+        self._tiebreak = 0
+        self._pause_until = {m: 0.0 for m in specs}
+        self._rng = random.Random(7)
 
     def _eff(self, limit: int) -> int:
         return max(int(limit * self.cfg.headroom), 1)
@@ -73,19 +82,38 @@ class Engine:
         self.sink.submitted(model, now, k, len(seq) - k, int(tokens.sum()))
         return k
 
+    def _finish(self, model: str, now: float, chunk: Chunk, code: int) -> None:
+        n = len(chunk[0])
+        self.sink.final(model, now, chunk[0], chunk[1], chunk[2], chunk[3], np.full(n, code, np.int8), np.full(n, now))
+
+    def _schedule_retry(self, model: str, now: float, chunk: Chunk, attempt: int) -> None:
+        delay = min(self.cfg.retry_backoff_s * 2 ** (attempt - 1), self.cfg.retry_backoff_cap_s) * self._rng.uniform(0.5, 1.5)
+        self._tiebreak += 1
+        heapq.heappush(self._delayed, (now + delay, self._tiebreak, model, chunk))
+        self._delayed_n[model] += len(chunk[0])
+
     def step(self, now: float, admit: bool = True) -> None:
         dt = 0.0 if self._credit_at is None else max(now - self._credit_at, 0.0)
         self._credit_at = now
+        while self._delayed and self._delayed[0][0] <= now:  # retries whose backoff is over rejoin the front of their queue
+            _, _, model, chunk = heapq.heappop(self._delayed)
+            self._delayed_n[model] -= len(chunk[0])
+            self.queues[model].push_front(chunk)
         for model, q in self.queues.items():
             self._credit[model] = min(self._credit[model] + self._rate(model) * dt, self._credit_cap(model))
             if q.n:
                 for c in q.expire(now - self.cfg.queue_ttl_s):
                     self.sink.expired(model, now, c[0], c[2])
-            if q.n and admit:
+            if q.n and admit and now >= self._pause_until[model]:
                 lim = self.limiters[model]
                 rem_req, _ = lim.remaining(now)
                 chunk = q.pop(min(rem_req, int(self._credit[model])))
                 if chunk is not None:
+                    big = chunk[1] > lim.tpm  # can never fit the token budget (e.g. the limit was lowered): fail it,
+                    if big.any():             # do not let it sit at the head and block everything behind it
+                        self._finish(model, now, tuple(a[big] for a in chunk), TOO_LARGE)  # type: ignore[arg-type]
+                        chunk = tuple(a[~big] for a in chunk)  # type: ignore[assignment]
+                if chunk is not None and len(chunk[0]):
                     k = lim.admit_chunk(now, chunk[1])
                     self._credit[model] -= k
                     if k < len(chunk[0]):
@@ -98,24 +126,33 @@ class Engine:
                         self.in_flight[model] += accepted
         for model, seq, tok, enq, att, codes, done in self.provider.poll(now):
             self.in_flight[model] -= len(seq)
-            retry = ((codes == TRANSIENT) & (att + 1 < self.cfg.max_attempts)) | (codes == RATE_LIMITED)
+            limited = codes == RATE_LIMITED
+            retry = ((codes == TRANSIENT) & (att + 1 < self.cfg.max_attempts)) | limited
             if retry.any():
-                order = np.argsort(enq[retry], kind="stable")  # queue expiry relies on enqueue order
-                # a provider 429 means "not yet", not a failed attempt, so it does not use up an attempt
-                next_att = att[retry] + (codes[retry] != RATE_LIMITED)
-                self.queues[model].push_front((seq[retry][order], tok[retry][order], enq[retry][order],
-                                               next_att[order].astype(np.int8)))
-                self.sink.retried(model, now, seq[retry][order])
+                idx = np.nonzero(retry)[0]
+                idx = idx[np.argsort(enq[idx], kind="stable")]  # queue expiry relies on enqueue order
+                r_seq, r_tok, r_enq, r_att, r_lim = seq[idx], tok[idx], enq[idx], att[idx], limited[idx]
+                self.sink.retried(model, now, r_seq)
+                if r_lim.any():
+                    # a provider 429 means "not yet", not a failed attempt: no attempt used, and stop sending for a moment
+                    self.queues[model].push_front((r_seq[r_lim], r_tok[r_lim], r_enq[r_lim], r_att[r_lim]))
+                    self._pause_until[model] = now + self.cfg.rate_limited_pause_s
+                tr = ~r_lim
+                if tr.any():
+                    nxt = (r_att[tr] + 1).astype(np.int8)
+                    for a in np.unique(nxt):  # one backoff per attempt number, so a retry storm spreads out
+                        m = nxt == a
+                        self._schedule_retry(model, now, (r_seq[tr][m], r_tok[tr][m], r_enq[tr][m], nxt[m]), int(a))
                 keep = ~retry
                 seq, tok, enq, att, codes, done = (a[keep] for a in (seq, tok, enq, att, codes, done))
             if len(seq):
                 self.sink.final(model, now, seq, tok, enq, att, codes, done)
 
     def queued(self, model: str) -> int:
-        return self.queues[model].n
+        return self.queues[model].n + self._delayed_n[model]  # waiting retries are still queued work
 
     def total_in_flight(self) -> int:
         return sum(self.in_flight.values())
 
     def total_queued(self) -> int:
-        return sum(q.n for q in self.queues.values())
+        return sum(q.n for q in self.queues.values()) + sum(self._delayed_n.values())

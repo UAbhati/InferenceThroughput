@@ -36,6 +36,12 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def auth_headers() -> dict[str, str]:
+    """Bearer token for the gateway's admin endpoints when ADMIN_TOKEN is set (the services inherit the same variable)."""
+    token = os.environ.get("ADMIN_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def pct(values: list[float], q: float) -> float:
     return round(float(np.percentile(values, q)), 4) if values else float("nan")
 
@@ -219,7 +225,7 @@ async def collect(gw: httpx.AsyncClient, pv: httpx.AsyncClient, scn: Scenario) -
 
 # ---------------------------------------------------------------------------------------------------------------
 async def run_rate_scenario(scn: Scenario, gw_url: str, pv_url: str) -> dict:
-    async with httpx.AsyncClient(base_url=gw_url, timeout=60) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv, \
+    async with httpx.AsyncClient(base_url=gw_url, timeout=60, headers=auth_headers()) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv, \
             aiohttp.ClientSession(gw_url, timeout=aiohttp.ClientTimeout(total=60), connector=aiohttp.TCPConnector(limit=2000)) as sender:
         await gw.post("/admin/reset")
         await pv.post("/admin/reset")
@@ -285,7 +291,7 @@ async def run_batch_scenario(scn: Scenario, gw_url: str, pv_url: str) -> dict:
         await asyncio.sleep(0.05)
     models, weights = list(job.mix), list(job.mix.values())
     items = [{"request_id": f"b{i}", "model": rng.choices(models, weights)[0], "estimated_tokens": job.token_size} for i in range(job.total)]
-    async with httpx.AsyncClient(base_url=gw_url, timeout=60) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv:
+    async with httpx.AsyncClient(base_url=gw_url, timeout=60, headers=auth_headers()) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv:
         await gw.post("/admin/reset")
         await pv.post("/admin/reset")
         t_ref = time.time()
@@ -362,7 +368,7 @@ async def run_recovery_scenario(scn: Scenario, out: Path) -> dict:
         gw_url, pv_url = stack.urls
         models, weights = list(job.mix), list(job.mix.values())
         items = [{"request_id": f"k{i}", "model": rng.choices(models, weights)[0], "estimated_tokens": job.token_size} for i in range(job.total)]
-        async with httpx.AsyncClient(base_url=gw_url, timeout=60) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv:
+        async with httpx.AsyncClient(base_url=gw_url, timeout=60, headers=auth_headers()) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv:
             await gw.post("/admin/reset")
             await pv.post("/admin/reset")
             t_ref = time.time()

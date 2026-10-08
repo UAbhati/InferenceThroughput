@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from gateway.engine import OK, PERMANENT
+from gateway.engine import OK, PERMANENT, TOO_LARGE
 from gateway.stats import StatsSink
 
 QUEUED, IN_FLIGHT, SUCCEEDED, FAILED, EXPIRED, REJECTED = (
@@ -43,6 +43,8 @@ class Batch:
     failed: int = 0  # includes expired
     expired: int = 0
     t_completed: float | None = None
+    idem_key: str | None = None
+    idem_hash: str | None = None
     callback: dict = field(default_factory=lambda: {"status": "none", "attempts": 0, "last_error": None, "delivered_at": None})
 
     @property
@@ -102,5 +104,5 @@ class RecordSink(StatsSink):
                 rec.state = SUCCEEDED
             else:
                 rec.state = FAILED
-                rec.error = "permanent_failure" if c == PERMANENT else "transient_failure_retries_exhausted"
+                rec.error = {PERMANENT: "permanent_failure", TOO_LARGE: "exceeds_model_token_limit"}.get(c, "transient_failure_retries_exhausted")
             self.on_done(rec)

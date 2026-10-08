@@ -100,3 +100,82 @@ def run_from(engine, now, rate, t_from, t_to, seq, dt=0.01):
             seq += n
         engine.step(now[0])
     return seq
+
+
+# ---- gotchas: oversized requests, retry storms, provider pushback ------------------------------------------------
+
+class ScriptedProvider:
+    """Answers every call with a fixed outcome 10 ms later and remembers when it was called."""
+
+    def __init__(self, code):
+        self.code, self.calls, self._pending = code, [], []
+
+    def submit(self, model, now, chunk):
+        self.calls.append((now, chunk[0].tolist()))
+        self._pending.append((now + 0.01, chunk))
+        return len(chunk[0])
+
+    def poll(self, now):
+        out, self._pending = [(t, c) for t, c in self._pending if t <= now], [(t, c) for t, c in self._pending if t > now]
+        res = []
+        for t, (seq, tok, enq, att) in out:
+            n = len(seq)
+            res.append(("m", seq, tok, enq, att, np.full(n, self.code, np.int8), np.full(n, t)))
+        return res
+
+
+class Collect(StatsSink):
+    def __init__(self):
+        super().__init__(["m"], 0.0, 100)
+        self.finals = {}
+
+    def final(self, model, now, seq, tokens, enq, attempt, codes, done):
+        super().final(model, now, seq, tokens, enq, attempt, codes, done)
+        for s, c in zip(seq.tolist(), codes.tolist()):
+            self.finals[s] = c
+
+
+def test_request_bigger_than_the_token_budget_fails_at_once_and_does_not_block_the_queue():
+    spec = ModelSpec(rpm=60_000, tpm=5_000, latency_ms_median=10, latency_sigma=0)
+    engine, sim, sink, now = build(spec, EngineConfig(queue_ttl_s=60, burst_s=60))
+    engine.submit("m", 0.0, np.array([0, 1, 2]), np.array([50_000, 500, 500]))  # the first can never fit 5,000 tokens/min
+    for i in range(300):
+        now[0] = i * 0.01
+        engine.step(now[0])
+    s = sink.series["m"]
+    assert s["failed"].sum() == 1 and s["succeeded"].sum() == 2 and s["expired"].sum() == 0
+
+
+def test_lowering_the_token_limit_fails_queued_requests_that_no_longer_fit_instead_of_wedging():
+    spec = ModelSpec(rpm=60_000, tpm=100_000, latency_ms_median=10, latency_sigma=0)
+    engine, sim, sink, now = build(spec, EngineConfig(queue_ttl_s=60, burst_s=60))
+    engine.set_limits("m", tpm=1_000)  # while 2,000-token requests are waiting
+    engine.submit("m", 0.0, np.arange(5), np.full(5, 2_000))
+    for i in range(100):
+        now[0] = i * 0.01
+        engine.step(now[0])
+    assert sink.series["m"]["failed"].sum() == 5 and engine.queued("m") == 0
+
+
+def test_transient_failures_are_retried_with_backoff_not_immediately():
+    prov, sink = ScriptedProvider(1), Collect()  # TRANSIENT every time
+    engine = Engine({"m": ModelSpec(rpm=60_000, tpm=10**9)}, prov, sink, EngineConfig(max_attempts=4, retry_backoff_s=0.25, burst_s=60))
+    engine.submit("m", 0.0, np.array([7]), np.array([100]))
+    for i in range(1000):
+        engine.step(i * 0.01)
+    times = [t for t, _ in prov.calls]
+    assert len(times) == 4 and sink.finals[7] == 1  # four attempts, then it gives up
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert gaps[0] >= 0.125 and gaps[1] >= 0.25 and gaps[2] >= 0.5  # 0.25 s doubling, jitter 0.5x-1.5x, plus the 10 ms call
+    assert gaps[2] > gaps[0]
+
+
+def test_provider_429_pauses_the_model_instead_of_hammering_and_uses_no_attempt():
+    prov, sink = ScriptedProvider(3), Collect()  # RATE_LIMITED every time
+    engine = Engine({"m": ModelSpec(rpm=60_000, tpm=10**9)}, prov, sink, EngineConfig(rate_limited_pause_s=0.5, max_attempts=1, burst_s=60))
+    engine.submit("m", 0.0, np.array([1]), np.array([100]))
+    for i in range(300):  # 3 simulated seconds
+        engine.step(i * 0.01)
+    assert 4 <= len(prov.calls) <= 8       # about one try per pause, not one per tick (that would be ~300)
+    assert 1 not in sink.finals            # still waiting: a 429 never counts as a failed attempt
+    assert engine.queued("m") == 1

@@ -25,7 +25,7 @@ from common.config import ModelsConfig
 from gateway.coordination import LocalCoordinator
 from gateway.engine import Engine
 from gateway.http_provider import HttpProvider
-from gateway.persistence import DuplicateId, NullPersistence
+from gateway.persistence import DuplicateId, DuplicateKey, NullPersistence
 from gateway.records import (EXPIRED, FAILED, FINAL_STATES, QUEUED, REJECTED, SUCCEEDED, Batch, Rec, RecordSink, Registry)
 
 log = logging.getLogger("gateway")
@@ -39,6 +39,18 @@ class Conflict(Exception):
 
 class Unavailable(Exception):
     pass
+
+
+class TooLarge(Exception):
+    """A request needs more tokens than the model's whole per-minute budget, so it could never be sent."""
+
+    def __init__(self, request_id: str, model: str, tokens: int, limit: int):
+        super().__init__(f"request {request_id!r} needs {tokens:,} tokens but {model} allows {limit:,} per minute on this gateway")
+        self.request_id, self.model, self.tokens, self.limit = request_id, model, tokens, limit
+
+
+class IdempotencyMismatch(Exception):
+    """The same Idempotency-Key was used with a different batch."""
 
 
 def iso_epoch(e: float | None) -> str | None:
@@ -58,6 +70,7 @@ class Gateway:
         self.limit_log: list[dict] = []
         self.batches: dict[str, Batch] = {}
         self._active: deque[Batch] = deque()  # batches that still have items to hand to the engine
+        self._batch_keys: dict[str, asyncio.Future] = {}  # Idempotency-Key -> (batch_id, body hash)
         self._callback_tasks: set[asyncio.Task] = set()
         self._tasks: list[asyncio.Task] = []
         self._build()
@@ -72,6 +85,7 @@ class Gateway:
         self.engine = Engine(shares, self.provider, self.sink, self.cfg.engine)
         self.batches.clear()
         self._active.clear()
+        self._batch_keys.clear()
         self.limit_log.clear()
 
     # ---- time ------------------------------------------------------------------------------------------------
@@ -185,12 +199,16 @@ class Gateway:
         cb = b.callback
         delivered = None if cb["delivered_at"] is None else datetime.fromisoformat(cb["delivered_at"]).timestamp()
         return (b.id, self.replica_id, b.callback_url, b.status, b.total, b.succeeded, b.failed, b.expired,
-                self.epoch(b.t_created), self.epoch(b.t_completed), cb["status"], cb["attempts"], cb["last_error"], delivered)
+                self.epoch(b.t_created), self.epoch(b.t_completed), cb["status"], cb["attempts"], cb["last_error"], delivered,
+                b.idem_key, b.idem_hash)
 
     # ---- single requests -------------------------------------------------------------------------------------
     async def submit_single(self, model: str, tokens: int, payload, request_id: str | None) -> tuple[str, str, bool]:
         """Return (request_id, state, created). Re-submitting a known id returns its state, unless it was rejected."""
         rid = request_id or uuid.uuid4().hex
+        limit = self.engine.limiters[model].tpm
+        if tokens > limit:
+            raise TooLarge(rid, model, tokens, limit)
         existing = self.registry.by_id.get(rid)
         if existing is not None and existing.state != REJECTED:
             return rid, existing.state, False
@@ -198,6 +216,10 @@ class Gateway:
             row = await self.persistence.get_request(rid)  # idempotency must also hold across restarts
             if row is not None:
                 return rid, row["state"], False
+            # the await above lets a concurrent retry of the same id get here first: look again before adding
+            existing = self.registry.by_id.get(rid)
+            if existing is not None and existing.state != REJECTED:
+                return rid, existing.state, False
         now = time.monotonic()
         rec = self.registry.add(rid, model, tokens, payload, now)
         if self.engine.submit(model, now, np.array([rec.seq]), np.array([tokens])) == 0:
@@ -208,16 +230,58 @@ class Gateway:
         return rid, rec.state, True
 
     # ---- batches ---------------------------------------------------------------------------------------------
-    async def create_batch(self, items: list[dict], callback_url: str | None) -> Batch:
-        """Register a batch, save it durably, and return; items are fed to the engine in the background."""
+    async def create_batch(self, items: list[dict], callback_url: str | None, idem_key: str | None = None,
+                           idem_hash: str | None = None) -> tuple[str, bool]:
+        """Register a batch, save it durably, and return (batch_id, created). Items are fed to the engine in the background.
+
+        With an Idempotency-Key, repeating the call returns the same batch instead of creating a second one
+        (a client that timed out cannot tell whether its first attempt arrived). The same key with a different body is refused.
+        """
+        if not idem_key:
+            return (await self._create_batch(items, callback_url, None, None)).id, True
+        pending = self._batch_keys.get(idem_key)
+        if pending is None and self.persistence.enabled:
+            row = await self.persistence.find_batch_by_key(idem_key)  # a retry may reach us after a restart
+            pending = self._batch_keys.get(idem_key)  # (or a concurrent twin registered while we waited)
+            if pending is None and row is not None:
+                if row["idem_hash"] != idem_hash:
+                    raise IdempotencyMismatch(f"Idempotency-Key {idem_key!r} was already used with a different batch")
+                return row["id"], False
+        if pending is not None:
+            batch_id, stored_hash = await asyncio.shield(pending)
+            if stored_hash != idem_hash:
+                raise IdempotencyMismatch(f"Idempotency-Key {idem_key!r} was already used with a different batch")
+            return batch_id, False
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._batch_keys[idem_key] = fut
+        try:
+            batch = await self._create_batch(items, callback_url, idem_key, idem_hash)
+        except BaseException as e:
+            self._batch_keys.pop(idem_key, None)
+            fut.set_exception(e)
+            fut.exception()  # mark as retrieved if nobody else is waiting
+            if isinstance(e, DuplicateKey):  # another replica stored the same key first
+                row = await self.persistence.find_batch_by_key(idem_key)
+                if row and row["idem_hash"] == idem_hash:
+                    return row["id"], False
+                raise IdempotencyMismatch(f"Idempotency-Key {idem_key!r} was already used with a different batch")
+            raise
+        fut.set_result((batch.id, idem_hash))
+        return batch.id, True
+
+    async def _create_batch(self, items: list[dict], callback_url: str | None, idem_key: str | None, idem_hash: str | None) -> Batch:
         ids = [it["request_id"] or uuid.uuid4().hex for it in items]
         if len(set(ids)) != len(ids):
             raise Conflict("duplicate request_id within the batch")
         clash = next((i for i in ids if i in self.registry.by_id), None)
         if clash:
             raise Conflict(f"request_id already exists: {clash}")
+        for rid, it in zip(ids, items):  # all or nothing: one request that can never run refuses the whole batch
+            limit = self.engine.limiters[it["model"]].tpm
+            if it["estimated_tokens"] > limit:
+                raise TooLarge(rid, it["model"], it["estimated_tokens"], limit)
         now = time.monotonic()
-        batch = Batch(uuid.uuid4().hex, [], callback_url, now)
+        batch = Batch(uuid.uuid4().hex, [], callback_url, now, idem_key=idem_key, idem_hash=idem_hash)
         for idx, (rid, it) in enumerate(zip(ids, items)):
             rec = self.registry.add(rid, it["model"], it["estimated_tokens"], it.get("payload"), now, batch, idx)
             batch.recs.append(rec)
@@ -233,6 +297,8 @@ class Gateway:
                     self.registry.by_seq.pop(r.seq, None)
                 if isinstance(e, DuplicateId):
                     raise Conflict(str(e))
+                if isinstance(e, DuplicateKey):
+                    raise
                 log.exception("could not save batch")
                 raise Unavailable("could not save the batch, nothing was accepted")
         for rec in batch.recs:
@@ -307,7 +373,8 @@ class Gateway:
         now = time.monotonic()
         n_batch_reqs = 0
         for brow, rrows in batches:
-            b = Batch(brow["id"], [], brow["callback_url"], self.mono(brow["created_at"]))
+            b = Batch(brow["id"], [], brow["callback_url"], self.mono(brow["created_at"]),
+                      idem_key=brow.get("idem_key"), idem_hash=brow.get("idem_hash"))
             b.callback.update(status=brow["cb_status"], last_error=brow["cb_last_error"], attempts=0,
                               delivered_at=iso_epoch(brow["cb_delivered_at"]))
             for rr in rrows:

@@ -274,3 +274,73 @@ async def test_survivor_adopts_work_of_a_replica_that_died():
         assert sorted(ids) == sorted(i["request_id"] for i in items)
     finally:
         await w.close()
+
+
+# ---- gotchas with the database: bad rows, odd payloads, concurrent retries, idempotency across restarts --------------
+
+async def test_one_row_the_database_rejects_cannot_block_the_others():
+    w = World(specs())
+    try:
+        gw, c = await w.gateway()
+        good = (await c.post("/v1/requests", json={"request_id": "good-1", "model": "a"})).status_code
+        # a row that overflows the integer column, as if validation had missed it
+        gw.persistence.put_request(("poison", gw.replica_id, None, 0, "a", 5_000_000_000, "null", "queued", 0, None, time.time(), None))
+        await c.post("/v1/requests", json={"request_id": "good-2", "model": "a"})
+        await wait(lambda: gw.is_idle(), 10)
+        await gw.persistence.flush()
+        assert good == 202 and gw.persistence.rows_dropped == 1 and not gw.persistence._req
+        states = (await c.post("/v1/requests/status", json={"ids": ["good-1", "good-2", "poison"]})).json()["states"]
+        assert states["good-1"] == "succeeded" and states["good-2"] == "succeeded" and states["poison"] == "unknown"
+    finally:
+        await w.close()
+
+
+async def test_payload_with_characters_postgres_json_dislikes_is_stored_and_the_batch_runs():
+    w = World(specs())
+    try:
+        gw, c = await w.gateway()
+        weird = {"text": "nul:\u0000 emoji:\U0001f600 quote:\" newline:\n", "n": [1, None, 2.5]}
+        r = await c.post("/v1/batches", json={"requests": [{"request_id": "weird", "model": "a", "payload": weird}]})
+        assert r.status_code == 202
+        await wait(lambda: gw.is_idle(), 10)
+        await gw.persistence.flush()
+        async with gw.persistence._pool.acquire() as conn:
+            import json as _json
+            assert _json.loads(await conn.fetchval("SELECT payload FROM requests WHERE id = 'weird'")) == weird
+    finally:
+        await w.close()
+
+
+async def test_concurrent_retries_of_the_same_request_id_send_one_provider_call():
+    w = World(specs(), engine=EngineConfig(queue_ttl_s=60))
+    try:
+        gw, c = await w.gateway()
+        rs = await asyncio.gather(*[c.post("/v1/requests", json={"request_id": "dup-1", "model": "a"}) for _ in range(8)])
+        assert sorted(r.status_code for r in rs) == [200] * 7 + [202]
+        await wait(lambda: gw.is_idle(), 10)
+        assert sum(w.sim.counts["a"].values()) == 1
+    finally:
+        await w.close()
+
+
+async def test_batch_idempotency_key_holds_across_a_restart_and_between_replicas():
+    w = World(specs())
+    try:
+        gw1, c1 = await w.gateway()
+        body = {"requests": [{"request_id": f"i{i}", "model": "a"} for i in range(20)]}
+        first = await c1.post("/v1/batches", json=body, headers={"Idempotency-Key": "once"})
+        await wait(lambda: gw1.is_idle(), 10)
+        await gw1.stop()
+        gw2, c2 = await w.gateway()
+        again = await c2.post("/v1/batches", json=body, headers={"Idempotency-Key": "once"})
+        assert again.status_code == 200 and again.json()["batch_id"] == first.json()["batch_id"] and again.json()["created"] is False
+        clash = await c2.post("/v1/batches", json={"requests": [{"model": "b"}]}, headers={"Idempotency-Key": "once"})
+        assert clash.status_code == 422
+        gw3, c3 = await w.gateway()  # a second replica racing with the same new key
+        gw4, c4 = await w.gateway()
+        b2 = {"requests": [{"model": "a"}] * 3}
+        rs = await asyncio.gather(c3.post("/v1/batches", json=b2, headers={"Idempotency-Key": "race"}),
+                                  c4.post("/v1/batches", json=b2, headers={"Idempotency-Key": "race"}))
+        assert rs[0].json()["batch_id"] == rs[1].json()["batch_id"] and sorted(r.json()["created"] for r in rs) == [False, True]
+    finally:
+        await w.close()

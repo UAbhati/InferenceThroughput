@@ -1,0 +1,27 @@
+# --- Local-only: assignment materials & planning (never submitted) ---
+requirement/
+PLAN.md
+TODO.md
+notes/
+.claude/
+CLAUDE.md
+
+# --- Raw run output (curated results go in reports/) ---
+runs/
+
+# --- Python / OS ---
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Local working notes for the author
+memory.md
+architecture.md

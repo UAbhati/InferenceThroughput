@@ -47,6 +47,14 @@ class ProviderSimulator:
         for m, s in models.items():
             self.audit.record_limits(m, clock(), s.rpm, s.tpm)
 
+    def reset(self) -> None:
+        """Fresh limiter windows, audit and counters; limits and behaviour are kept."""
+        self._limiters = {m: SlidingWindowLimiter(s.rpm, s.tpm) for m, s in self.specs.items()}
+        self.audit = UsageAudit(self.clock())
+        self.counts = {m: {o.value: 0 for o in Outcome} for m in self.specs}
+        for m, s in self.specs.items():
+            self.audit.record_limits(m, self.clock(), s.rpm, s.tpm)
+
     def set_limits(self, model: str, rpm: int | None = None, tpm: int | None = None) -> ModelSpec:
         spec = self.specs[model]
         updated = spec.model_copy(update={k: v for k, v in (("rpm", rpm), ("tpm", tpm)) if v})

@@ -48,12 +48,12 @@ class StatsSink:
     def expired(self, model, now, seq, enq):
         self.series[model]["expired"][self._i(now)] += len(seq)
 
-    def retried(self, model, now, n):
-        self.series[model]["retried"][self._i(now)] += n
+    def retried(self, model, now, seq):
+        self.series[model]["retried"][self._i(now)] += len(seq)
 
-    def final(self, model, now, seq, tokens, enq, attempt, ok, done):
+    def final(self, model, now, seq, tokens, enq, attempt, codes, done):
         s, i = self.series[model], self._i(now)
-        n_ok = int(ok.sum())
+        n_ok = int((codes == 0).sum())
         s["completed"][i] += len(seq)
         s["succeeded"][i] += n_ok
         s["failed"][i] += len(seq) - n_ok

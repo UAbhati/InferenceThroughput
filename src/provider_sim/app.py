@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -22,7 +23,7 @@ class InferenceIn(BaseModel):
     request_id: str
     model: str
     estimated_tokens: int = 1000
-    payload: dict | None = None
+    payload: Any = None
 
 
 class LimitsIn(BaseModel):
@@ -62,6 +63,21 @@ def create_app(sim: ProviderSimulator | None = None) -> FastAPI:
             out[m] = {"limits": {"rpm": spec.rpm, "tpm": spec.tpm}, "counts": sim.counts[m],
                       **sim.audit.violations(m, spec.rpm, spec.tpm)}
         return out
+
+    @app.post("/admin/reset")
+    async def reset():
+        sim.reset()
+        return {"ok": True}
+
+    @app.get("/admin/audit/raw")
+    async def audit_raw():
+        """Accepted requests/tokens per 10ms bucket (index 0 = last reset), for external verification."""
+        return {m: {"bucket_s": 0.01, "requests": sim.audit._req[m].tolist(), "tokens": sim.audit._tok[m].tolist()}
+                for m in sim.audit._req}
+
+    @app.get("/healthz")
+    async def healthz():
+        return {"ok": True}
 
     @app.get("/admin/audit/{model}/timeline")
     async def timeline(model: str, step_s: float = 1.0):

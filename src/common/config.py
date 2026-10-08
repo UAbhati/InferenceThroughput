@@ -26,8 +26,24 @@ class EngineConfig(BaseModel):
     tick_s: float = Field(default=0.005, gt=0, description="dispatch loop period")
 
 
+class GatewayConfig(BaseModel):
+    """Service-level settings (batches, callbacks)."""
+    batch_max_requests: int = 100_000
+    batch_queue_fraction: float = Field(default=0.5, gt=0, le=1, description="share of a model queue batches may fill")
+    batch_target_ttl_fraction: float = Field(default=0.5, gt=0, le=1,
+                                             description="feed batches no deeper than this fraction of ttl worth of capacity")
+    callback_max_attempts: int = 8
+    callback_backoff_base_s: float = 0.5
+    callback_backoff_cap_s: float = 15.0
+    callback_timeout_s: float = 5.0
+    callback_inline_results_max: int = 100
+    provider_timeout_s: float = 60.0
+
+
 class ModelsConfig(BaseModel):
     models: dict[str, ModelSpec]
+    engine: EngineConfig = EngineConfig()
+    gateway: GatewayConfig = GatewayConfig()
 
     @classmethod
     def load(cls, path: str | Path) -> "ModelsConfig":

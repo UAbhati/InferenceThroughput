@@ -21,7 +21,7 @@ from common.config import EngineConfig, ModelSpec
 from gateway.limiter import SlidingWindowLimiter
 from gateway.queueing import Chunk, ChunkQueue
 
-OK, TRANSIENT, PERMANENT = 0, 1, 2  # provider outcome codes
+OK, TRANSIENT, PERMANENT, RATE_LIMITED = 0, 1, 2, 3  # provider outcome codes
 
 
 class Provider(Protocol):
@@ -36,8 +36,9 @@ class Sink(Protocol):
     def submitted(self, model: str, now: float, accepted: int, rejected: int, tokens: int) -> None: ...
     def expired(self, model: str, now: float, seq: np.ndarray, enq: np.ndarray) -> None: ...
     def final(self, model: str, now: float, seq: np.ndarray, tokens: np.ndarray, enq: np.ndarray,
-              attempt: np.ndarray, ok: np.ndarray, done: np.ndarray) -> None: ...
-    def retried(self, model: str, now: float, n: int) -> None: ...
+              attempt: np.ndarray, codes: np.ndarray, done: np.ndarray) -> None: ...
+    def retried(self, model: str, now: float, seq: np.ndarray) -> None:
+        """Requests going back to the queue (transient failure, or the provider pushed back)."""
 
 
 class Engine:
@@ -85,16 +86,18 @@ class Engine:
                         self.in_flight[model] += accepted
         for model, seq, tok, enq, att, codes, done in self.provider.poll(now):
             self.in_flight[model] -= len(seq)
-            retry = (codes == TRANSIENT) & (att + 1 < self.cfg.max_attempts)
+            retry = ((codes == TRANSIENT) & (att + 1 < self.cfg.max_attempts)) | (codes == RATE_LIMITED)
             if retry.any():
                 order = np.argsort(enq[retry], kind="stable")  # queue expiry relies on enqueue order
+                # a provider 429 means "not yet", not a failed attempt, so it does not use up an attempt
+                next_att = att[retry] + (codes[retry] != RATE_LIMITED)
                 self.queues[model].push_front((seq[retry][order], tok[retry][order], enq[retry][order],
-                                               (att[retry][order] + 1).astype(np.int8)))
-                self.sink.retried(model, now, int(retry.sum()))
+                                               next_att[order].astype(np.int8)))
+                self.sink.retried(model, now, seq[retry][order])
                 keep = ~retry
                 seq, tok, enq, att, codes, done = (a[keep] for a in (seq, tok, enq, att, codes, done))
             if len(seq):
-                self.sink.final(model, now, seq, tok, enq, att, codes == OK, done)
+                self.sink.final(model, now, seq, tok, enq, att, codes, done)
 
     def queued(self, model: str) -> int:
         return self.queues[model].n

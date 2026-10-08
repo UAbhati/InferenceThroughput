@@ -87,4 +87,4 @@ def create_app(sim: ProviderSimulator | None = None) -> FastAPI:
     return app
 
 
-app = create_app() if os.environ.get("PROVIDER_AUTOSTART", "1") == "1" and os.path.exists("config/models.yaml") else None
+app = create_app() if os.environ.get("PROVIDER_AUTOSTART", "1") == "1" and os.path.exists(os.environ.get("PROVIDER_MODELS", "config/models.yaml")) else None

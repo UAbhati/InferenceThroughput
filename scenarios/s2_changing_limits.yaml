@@ -1,0 +1,20 @@
+name: s2-changing-limits
+description: >
+  Scenario 2. Model A (30,000 RPM / 60M TPM) and Model B (20,000 RPM / 40M TPM) both offered more than they allow.
+  Model A is cut to 5,000 RPM at t=100s and restored at t=200s while the services keep running; Model B is untouched.
+mode: http
+kind: limit_changes
+duration_s: 300
+warmup_s: 60
+drain_s: 30
+models:
+  model-a: {rpm: 30000, tpm: 60000000, latency_ms_median: 300, latency_sigma: 0.4}
+  model-b: {rpm: 20000, tpm: 40000000, latency_ms_median: 500, latency_sigma: 0.4}
+load:
+  rate_per_s: 1100          # model-a ~650/s (39k RPM offered), model-b ~450/s (27k RPM offered)
+  mix: {model-a: 0.59, model-b: 0.41}
+  token_size: 1000
+changes:
+  - {at_s: 100, model: model-a, rpm: 5000}
+  - {at_s: 200, model: model-a, rpm: 30000}
+engine: {queue_max: 20000, queue_ttl_s: 30, max_attempts: 3, headroom: 0.98}

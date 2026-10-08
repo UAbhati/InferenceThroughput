@@ -16,7 +16,7 @@ SETTLE_S = 0.05  # shards apply a limit change within a tick or two of the maste
 
 
 def _merge(arrs: list[np.ndarray]) -> np.ndarray:
-    n = max(len(a) for a in arrs)
+    n = max((len(a) for a in arrs), default=1)
     out = np.zeros(n, np.int64)
     for a in arrs:
         out[: len(a)] += a
@@ -58,15 +58,16 @@ def judge_windows(arr: np.ndarray, initial: int, changes: list[tuple[float, int]
             "worst_at_s": float(t_end[worst]), "ok": bool(ratio.max() <= 1.0)}
 
 
-def build_report(scn: Scenario, results: list[dict], changes_log: list[dict], procs: int, wall_s: float) -> dict:
+def build_report(scn: Scenario, results: list[dict], changes_log: list[dict], procs: int, wall_s: float,
+                 mode: str = "bulk (in-process simulated provider, wall clock)") -> dict:
     models = list(scn.models)
     steady_lo, steady_hi = int(scn.warmup_s), int(scn.duration_s)
     steady_s = max(steady_hi - steady_lo, 1)
-    rep: dict = {"scenario": scn.name, "description": scn.description, "mode": "bulk (in-process simulated provider, wall clock)",
+    rep: dict = {"scenario": scn.name, "description": scn.description, "mode": mode,
                  "environment": {"python": sys.version.split()[0], "platform": platform.platform(),
                                  "cpu_count": os.cpu_count(), "shards": procs, "wall_s": round(wall_s, 1)},
-                 "config": {"duration_s": scn.duration_s, "warmup_s": scn.warmup_s, "offered_rate_per_s": scn.load.rate_per_s,
-                            "mix": scn.load.mix, "token_size": scn.load.token_size, "engine": scn.engine.model_dump(),
+                 "config": {"duration_s": scn.duration_s, "warmup_s": scn.warmup_s, "offered_rate_per_s": scn.load.rate_per_s if scn.load else None,
+                            "mix": scn.load.mix if scn.load else None, "token_size": scn.load.token_size if scn.load else None, "engine": scn.engine.model_dump(),
                             "models": {m: s.model_dump() for m, s in scn.models.items()}},
                  "limit_changes": changes_log, "models": {}}
     tot = {k: 0 for k in SERIES}
@@ -115,9 +116,9 @@ def render_markdown(rep: dict) -> str:
     o, env = rep["overall"], rep["environment"]
     t = o["totals"]
     lines = [f"# {rep['scenario']}", "", rep["description"], "",
-             f"Mode: {rep['mode']}. {env['shards']} shard processes on {env['cpu_count']} CPUs, Python {env['python']}, {env['platform']}.", "",
+             f"Mode: {rep['mode']}. {env['shards']} process(es) for the engine on {env['cpu_count']} CPUs, Python {env['python']}, {env['platform']}.", "",
              "## Overall (measured)", "",
-             f"- Offered: {rep['config']['offered_rate_per_s']:,.0f} req/s for {rep['config']['duration_s']}s (warm-up {rep['config']['warmup_s']}s excluded from steady state)",
+             f"- Offered: {rep['config']['offered_rate_per_s'] or 0:,.0f} req/s for {rep['config']['duration_s']}s (warm-up {rep['config']['warmup_s']}s excluded from steady state)",
              f"- **Completed per second (steady state): {o['steady_completed_per_s']:,}**",
              f"- Submitted {t['submitted']:,}; completed {t['completed']:,} (succeeded {t['succeeded']:,}, failed {t['failed']:,}); "
              f"expired {t['expired']:,}; rejected {t['rejected']:,}; retried attempts {t['retried']:,}",
@@ -133,6 +134,13 @@ def render_markdown(rep: dict) -> str:
                   f"{a['tpm']['max_window']:,} tokens (worst ratio {a['tpm']['worst_ratio']:.4f})",
                   f"- Latency p50/p95/p99: {v['latency_s']['p50']}s / {v['latency_s']['p95']}s / {v['latency_s']['p99']}s",
                   f"- Totals: {v['totals']}", ""]
+    if rep.get("client"):
+        c = rep["client"]
+        lines += ["## Load generator (client side)", ""] + [f"- {k}: {v}" for k, v in c.items()] + [""]
+    if rep.get("batch"):
+        lines += ["## Batch and callback", ""] + [f"- {k}: {v}" for k, v in rep["batch"].items()] + [""]
+    if rep.get("checks"):
+        lines += ["## Pass criteria", ""] + [f"- [{'x' if v['ok'] else ' '}] {k}: {v['detail']}" for k, v in rep["checks"].items()] + [""]
     if rep["limit_changes"]:
         lines += ["## Limit changes applied while running", ""] + [f"- t={c['at_s']:.1f}s {c['model']}: rpm={c.get('rpm')} tpm={c.get('tpm')}" for c in rep["limit_changes"]] + [""]
     return "\n".join(lines)

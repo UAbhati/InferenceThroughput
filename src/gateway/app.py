@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AnyHttpUrl, BaseModel, Field
 
 from common.config import ModelsConfig
+from gateway.http_provider import AiohttpCaller
 from gateway.records import REJECTED
 from gateway.service import Conflict, Gateway
 
@@ -41,24 +42,18 @@ class IdsIn(BaseModel):
     ids: list[str]
 
 
-def create_app(cfg: ModelsConfig | None = None, provider_client: httpx.AsyncClient | None = None,
+def create_app(cfg: ModelsConfig | None = None, provider_caller=None,
                callback_client: httpx.AsyncClient | None = None) -> FastAPI:
     cfg = cfg or ModelsConfig.load(os.environ.get("GATEWAY_MODELS", "config/models.yaml"))
-    owns_client = provider_client is None
-    if provider_client is None:
-        provider_client = httpx.AsyncClient(
-            base_url=os.environ.get("PROVIDER_URL", "http://127.0.0.1:8001"),
-            timeout=cfg.gateway.provider_timeout_s,
-            limits=httpx.Limits(max_connections=2000, max_keepalive_connections=500))
-    gw = Gateway(cfg, provider_client, callback_client, os.environ.get("GATEWAY_PUBLIC_URL", "http://127.0.0.1:8000"))
+    if provider_caller is None:
+        provider_caller = AiohttpCaller(os.environ.get("PROVIDER_URL", "http://127.0.0.1:8001"), cfg.gateway.provider_timeout_s)
+    gw = Gateway(cfg, provider_caller, callback_client, os.environ.get("GATEWAY_PUBLIC_URL", "http://127.0.0.1:8000"))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         gw.start()
         yield
         await gw.stop()
-        if owns_client:
-            await provider_client.aclose()
 
     app = FastAPI(title="Inference gateway", lifespan=lifespan)
     app.state.gw = gw

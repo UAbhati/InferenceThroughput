@@ -48,9 +48,17 @@ class Engine:
         self.queues = {m: ChunkQueue() for m in specs}
         self.limiters = {m: SlidingWindowLimiter(self._eff(s.rpm), self._eff(s.tpm)) for m, s in specs.items()}
         self.in_flight = {m: 0 for m in specs}
+        self._credit = {m: self._credit_cap(m) for m in specs}  # smoothing: requests we may send right now
+        self._credit_at: float | None = None
 
     def _eff(self, limit: int) -> int:
         return max(int(limit * self.cfg.headroom), 1)
+
+    def _rate(self, model: str) -> float:
+        return self.limiters[model].rpm / 60.0
+
+    def _credit_cap(self, model: str) -> float:
+        return max(self._rate(model) * self.cfg.burst_s, 2.0)
 
     def set_limits(self, model: str, rpm: int | None = None, tpm: int | None = None) -> None:
         self.limiters[model].set_limits(self._eff(rpm) if rpm else None, self._eff(tpm) if tpm else None)
@@ -66,16 +74,20 @@ class Engine:
         return k
 
     def step(self, now: float) -> None:
+        dt = 0.0 if self._credit_at is None else max(now - self._credit_at, 0.0)
+        self._credit_at = now
         for model, q in self.queues.items():
+            self._credit[model] = min(self._credit[model] + self._rate(model) * dt, self._credit_cap(model))
             if q.n:
                 for c in q.expire(now - self.cfg.queue_ttl_s):
                     self.sink.expired(model, now, c[0], c[2])
             if q.n:
                 lim = self.limiters[model]
                 rem_req, _ = lim.remaining(now)
-                chunk = q.pop(rem_req)
+                chunk = q.pop(min(rem_req, int(self._credit[model])))
                 if chunk is not None:
                     k = lim.admit_chunk(now, chunk[1])
+                    self._credit[model] -= k
                     if k < len(chunk[0]):
                         q.push_front(tuple(a[k:] for a in chunk))  # type: ignore[arg-type]
                     if k:

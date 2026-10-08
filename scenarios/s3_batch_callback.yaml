@@ -1,0 +1,18 @@
+name: s3-batch-callback
+description: >
+  Scenario 3. One asynchronous batch of 10,000 requests across two models, with simulated transient and
+  permanent failures. The callback receiver refuses the first two delivery attempts.
+mode: http
+kind: batch
+duration_s: 120          # upper bound for the batch to finish and the callback to be delivered
+warmup_s: 0
+drain_s: 30
+models:
+  model-a: {rpm: 30000, tpm: 60000000, latency_ms_median: 300, latency_sigma: 0.4, transient_failure_rate: 0.15, permanent_failure_rate: 0.03}
+  model-b: {rpm: 20000, tpm: 40000000, latency_ms_median: 500, latency_sigma: 0.4, transient_failure_rate: 0.10, permanent_failure_rate: 0.02}
+batch_job:
+  total: 10000
+  mix: {model-a: 0.6, model-b: 0.4}
+  token_size: 1000
+  callback_reject_first: 2
+engine: {queue_max: 100000, queue_ttl_s: 60, max_attempts: 3, headroom: 0.98}

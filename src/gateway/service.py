@@ -29,10 +29,10 @@ class Conflict(Exception):
 
 
 class Gateway:
-    def __init__(self, cfg: ModelsConfig, provider_client: httpx.AsyncClient, callback_client: httpx.AsyncClient | None = None,
+    def __init__(self, cfg: ModelsConfig, provider_caller, callback_client: httpx.AsyncClient | None = None,
                  public_url: str = "http://127.0.0.1:8000"):
         self.cfg, self.public_url = cfg, public_url.rstrip("/")
-        self.provider_client = provider_client
+        self.provider_caller = provider_caller
         self.callback_client = callback_client or httpx.AsyncClient(timeout=cfg.gateway.callback_timeout_s)
         self.specs = dict(cfg.models)
         self.limit_log: list[dict] = []
@@ -46,7 +46,7 @@ class Gateway:
         self.mono0, self.wall0 = time.monotonic(), time.time()
         self.registry = Registry()
         self.sink = RecordSink(self.specs, self.mono0, STATS_HORIZON_S, self.registry, self._on_done)
-        self.provider = HttpProvider(self.provider_client, self.registry)
+        self.provider = HttpProvider(self.provider_caller, self.registry)
         self.engine = Engine(self.specs, self.provider, self.sink, self.cfg.engine)
         self.batches.clear()
         self._active.clear()
@@ -70,6 +70,8 @@ class Gateway:
         for t in list(self._callback_tasks):
             t.cancel()
         await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+        await self.provider_caller.close()
+        await self.callback_client.aclose()
 
     async def _run(self) -> None:
         tick = self.cfg.engine.tick_s

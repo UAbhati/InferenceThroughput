@@ -1,0 +1,16 @@
+name: s1-capacity
+description: >
+  Scenario 1. One model at the available provider capacity (50,000 RPM / 100M TPM), 1,000-token requests offered
+  at 66,000 RPM (32% above capacity) for 6 minutes. The first 60s (window fill) is excluded from the steady state.
+mode: http
+kind: capacity
+duration_s: 360
+warmup_s: 60
+drain_s: 30
+models:
+  model-a: {rpm: 50000, tpm: 100000000, latency_ms_median: 300, latency_sigma: 0.4}
+load:
+  rate_per_s: 1100
+  mix: {model-a: 1.0}
+  token_size: 1000
+engine: {queue_max: 20000, queue_ttl_s: 30, max_attempts: 3, headroom: 0.98}

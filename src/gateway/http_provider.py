@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import aiohttp
 import httpx
 import numpy as np
 
@@ -13,9 +14,45 @@ from gateway.records import IN_FLIGHT, Registry
 STATUS_TO_CODE = {200: OK, 429: RATE_LIMITED, 503: TRANSIENT, 422: PERMANENT}
 
 
+class AiohttpCaller:
+    """POST /inference with aiohttp. (httpx's connection pool does work proportional to
+    connections x waiting requests per call, which stalls the event loop at a few thousand
+    concurrent calls; aiohttp's does not.)"""
+
+    def __init__(self, base_url: str, timeout_s: float = 60.0, max_connections: int = 4000):
+        self.base_url, self.timeout_s, self.max_connections = base_url.rstrip("/"), timeout_s, max_connections
+        self._session: aiohttp.ClientSession | None = None
+
+    async def __call__(self, body: dict) -> int:
+        if self._session is None:
+            self._session = aiohttp.ClientSession(
+                self.base_url, timeout=aiohttp.ClientTimeout(total=self.timeout_s),
+                connector=aiohttp.TCPConnector(limit=self.max_connections, keepalive_timeout=30))
+        async with self._session.post("/inference", json=body) as r:
+            await r.read()
+            return r.status
+
+    async def close(self) -> None:
+        if self._session:
+            await self._session.close()
+
+
+class HttpxCaller:
+    """Same interface over an httpx client (used in tests with an in-process ASGI provider)."""
+
+    def __init__(self, client: httpx.AsyncClient):
+        self.client = client
+
+    async def __call__(self, body: dict) -> int:
+        return (await self.client.post("/inference", json=body)).status_code
+
+    async def close(self) -> None:
+        await self.client.aclose()
+
+
 class HttpProvider:
-    def __init__(self, client: httpx.AsyncClient, registry: Registry):
-        self.client, self.registry = client, registry
+    def __init__(self, caller, registry: Registry):
+        self.caller, self.registry = caller, registry
         self._done: list[tuple] = []
         self._tasks: set[asyncio.Task] = set()
 
@@ -31,10 +68,10 @@ class HttpProvider:
 
     async def _call(self, model, rec, seq, tokens, enq, att) -> None:
         try:
-            r = await self.client.post("/inference", json={"request_id": rec.id, "model": model,
-                                                           "estimated_tokens": tokens, "payload": rec.payload})
-            code = STATUS_TO_CODE.get(r.status_code, TRANSIENT if r.status_code >= 500 else PERMANENT)
-        except (httpx.HTTPError, OSError):
+            status = await self.caller({"request_id": rec.id, "model": model, "estimated_tokens": tokens,
+                                        "payload": rec.payload})
+            code = STATUS_TO_CODE.get(status, TRANSIENT if status >= 500 else PERMANENT)
+        except (aiohttp.ClientError, httpx.HTTPError, asyncio.TimeoutError, OSError):
             code = TRANSIENT  # network trouble is worth retrying
         self._done.append((model, seq, tokens, enq, att, code, time.monotonic()))
 

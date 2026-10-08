@@ -24,6 +24,8 @@ class EngineConfig(BaseModel):
     max_attempts: int = Field(default=3, ge=1, description="attempts per request incl. retries of transient failures")
     headroom: float = Field(default=1.0, gt=0, le=1, description="fraction of the provider limit the gateway uses")
     tick_s: float = Field(default=0.005, gt=0, description="dispatch loop period")
+    burst_s: float = Field(default=0.25, gt=0, description="smoothing: never send more than this many seconds of "
+                                                         "capacity at once (the sliding window alone would allow a full minute)")
 
 
 class GatewayConfig(BaseModel):

@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from common.config import EngineConfig, GatewayConfig, ModelsConfig, ModelSpec
 from gateway.app import create_app
+from gateway.http_provider import HttpxCaller
 from provider_sim.app import create_app as create_provider
 from provider_sim.simulator import ProviderSimulator
 
@@ -38,7 +39,7 @@ class Rig:
         cb_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=sink), base_url="http://sink")
         cfg = ModelsConfig(models=models, engine=engine or EngineConfig(),
                            gateway=gateway or GatewayConfig(callback_backoff_base_s=0.05, callback_backoff_cap_s=0.2))
-        self.app = create_app(cfg, provider_client, cb_client)
+        self.app = create_app(cfg, HttpxCaller(provider_client), cb_client)
         self.gw = self.app.state.gw
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://gw")
 
@@ -72,7 +73,7 @@ async def test_single_request_lifecycle():
 
 async def test_full_queue_rejects_with_429_and_everything_is_accounted():
     # limit of 60 rpm => at most ~58 admitted at once; queue of 20 holds the rest, the rest is rejected
-    async with Rig(specs(rpm=60), engine=EngineConfig(queue_max=20, queue_ttl_s=1.0)) as rig:
+    async with Rig(specs(rpm=60), engine=EngineConfig(queue_max=20, queue_ttl_s=1.0, burst_s=60)) as rig:
         codes = [(await rig.client.post("/v1/requests", json={"request_id": f"r{i}", "model": "a"})).status_code for i in range(200)]
         assert codes.count(429) > 100 and codes.count(202) > 0
         await rig.wait(lambda: rig.gw.is_idle(), 30)
@@ -134,7 +135,7 @@ async def test_batch_validation():
 async def test_limits_change_at_runtime_through_api_and_models_are_independent():
     base = dict(tpm=10**10, latency_ms_median=5, latency_sigma=0)
     models = {"a": ModelSpec(rpm=3000, **base), "b": ModelSpec(rpm=600_000, **base)}
-    async with Rig(models, engine=EngineConfig(queue_max=50_000, queue_ttl_s=120)) as rig:
+    async with Rig(models, engine=EngineConfig(queue_max=50_000, queue_ttl_s=120, burst_s=120)) as rig:
         items = [{"model": m} for _ in range(4000) for m in "ab"]
         await rig.client.post("/v1/batches", json={"requests": items})
         await rig.wait(lambda: rig.gw.engine.limiters["a"].used_req >= 2500, 30)

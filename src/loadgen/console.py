@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import random
 import socket
 import tempfile
@@ -20,6 +21,7 @@ import webbrowser
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp
 import httpx
@@ -63,6 +65,34 @@ class BehaviorIn(BaseModel):
 def port_free(port: int) -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def load_optional_backends(env_file: Path = Path(".env")) -> tuple[list[str], list[str]]:
+    """Load local optional-service URLs and disable each one when it is not reachable.
+
+    The console must remain easy to start without Docker, so a stale `.env` never prevents
+    an in-memory demo from starting.
+    """
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    enabled, unavailable = [], []
+    for key, label in (("DATABASE_URL", "Postgres"), ("REDIS_URL", "Redis")):
+        url = os.environ.get(key)
+        if not url:
+            continue
+        parsed = urlparse(url)
+        try:
+            with socket.create_connection((parsed.hostname or "127.0.0.1", parsed.port or 0), timeout=0.5):
+                enabled.append(label)
+        except OSError:
+            os.environ.pop(key, None)
+            unavailable.append(label)
+    return enabled, unavailable
 
 
 class LiveLoad:
@@ -291,6 +321,11 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8082)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
+    enabled, unavailable = load_optional_backends()
+    if enabled:
+        print(f"  Optional services: {', '.join(enabled)} enabled")
+    if unavailable:
+        print(f"  Optional services unavailable: {', '.join(unavailable)}; using in-memory mode for them")
     app = create_console(args.models, args.port)
     if not args.no_browser:
         threading.Timer(2.5, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()

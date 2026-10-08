@@ -43,9 +43,11 @@ localhost. Worker processes are started with `spawn`, so it behaves the same on 
 sizes itself from `os.cpu_count()` (override with `--procs`).
 
 ## Try it
-The quickest way to see it work is the demo console. One command starts the provider and the gateway and serves a control page:
+The quickest way to see it work is the demo console. From the **repository root**, after completing Setup and activating
+the virtual environment, run:
 
 ```bash
+source .venv/bin/activate          # if not activated, if already activated then ignore this
 python -m loadgen.console          # then open http://127.0.0.1:8080
 ```
 

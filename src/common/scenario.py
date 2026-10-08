@@ -31,6 +31,7 @@ class BatchJob(BaseModel):
     mix: dict[str, float]
     token_size: int = 1000
     callback_reject_first: int = Field(default=2, description="callback receiver answers 503 to this many attempts")
+    kill_gateway_after_fraction: float = Field(default=0.3, description="recovery scenario: kill -9 the gateway once this share of the batch is final")
 
 
 class Scenario(BaseModel):
@@ -41,7 +42,7 @@ class Scenario(BaseModel):
     drain_s: float = 15.0
     models: dict[str, ModelSpec]
     mode: Literal["bulk", "http"] = "bulk"
-    kind: Literal["generic", "capacity", "limit_changes", "batch"] = "generic"  # selects the pass criteria
+    kind: Literal["generic", "capacity", "limit_changes", "batch", "recovery"] = "generic"  # selects the pass criteria
     load: Load | None = None
     batch_job: BatchJob | None = None
     gateway: GatewayConfig = GatewayConfig()

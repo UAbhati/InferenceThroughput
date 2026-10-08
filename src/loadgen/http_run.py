@@ -40,32 +40,59 @@ def pct(values: list[float], q: float) -> float:
     return round(float(np.percentile(values, q)), 4) if values else float("nan")
 
 
-@contextmanager
-def services(scn: Scenario, out: Path):
-    """Start provider + gateway subprocesses with this scenario's models; stop them on exit."""
-    cfg = ModelsConfig(models=scn.models, engine=scn.engine, gateway=scn.gateway)
-    models_file = out / "models.yaml"
-    models_file.write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
-    pp, gp = free_port(), free_port()
-    base = [sys.executable, "-m", "uvicorn", "--host", "127.0.0.1", "--log-level", "warning", "--no-access-log"]
-    env = {**os.environ, "PROVIDER_MODELS": str(models_file), "GATEWAY_MODELS": str(models_file),
-           "PROVIDER_URL": f"http://127.0.0.1:{pp}", "GATEWAY_PUBLIC_URL": f"http://127.0.0.1:{gp}"}
-    procs = []
-    try:
-        for name, app, port in (("provider", "provider_sim.app:app", pp), ("gateway", "gateway.app:app", gp)):
-            log = open(out / f"{name}.log", "w")
-            procs.append(subprocess.Popen(base + [app, "--port", str(port)], env=env, stdout=log, stderr=log))
-        for port in (pp, gp):
-            for _ in range(100):
-                try:
-                    if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1).status_code == 200:
-                        break
-                except httpx.HTTPError:
-                    time.sleep(0.2)
-            else:
-                raise RuntimeError(f"service on port {port} did not start; see logs in {out}")
-        yield f"http://127.0.0.1:{gp}", f"http://127.0.0.1:{pp}"
-    finally:
+class Stack:
+    """Provider simulator + gateway as subprocesses. The gateway can be killed and started again on its own."""
+
+    def __init__(self, scn: Scenario, out: Path):
+        cfg = ModelsConfig(models=scn.models, engine=scn.engine, gateway=scn.gateway)
+        self.out = out
+        self.models_file = out / "models.yaml"
+        self.models_file.write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
+        self.pp, self.gp = free_port(), free_port()
+        self.env = {**os.environ, "PROVIDER_MODELS": str(self.models_file), "GATEWAY_MODELS": str(self.models_file),
+                    "PROVIDER_URL": f"http://127.0.0.1:{self.pp}", "GATEWAY_PUBLIC_URL": f"http://127.0.0.1:{self.gp}"}
+        self.provider: subprocess.Popen | None = None
+        self.gateway: subprocess.Popen | None = None
+        self._gateway_starts = 0
+
+    @property
+    def urls(self) -> tuple[str, str]:
+        return f"http://127.0.0.1:{self.gp}", f"http://127.0.0.1:{self.pp}"
+
+    def _spawn(self, name: str, app: str, port: int) -> subprocess.Popen:
+        base = [sys.executable, "-m", "uvicorn", "--host", "127.0.0.1", "--log-level", "warning", "--no-access-log"]
+        log = open(self.out / f"{name}.log", "a")
+        return subprocess.Popen(base + [app, "--port", str(port)], env=self.env, stdout=log, stderr=log)
+
+    def _wait_healthy(self, port: int, timeout: float = 30) -> None:
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1).status_code == 200:
+                    return
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        raise RuntimeError(f"service on port {port} did not start; see logs in {self.out}")
+
+    def start(self) -> "Stack":
+        self.provider = self._spawn("provider", "provider_sim.app:app", self.pp)
+        self.start_gateway()
+        self._wait_healthy(self.pp)
+        return self
+
+    def start_gateway(self) -> None:
+        self._gateway_starts += 1
+        self.gateway = self._spawn("gateway" if self._gateway_starts == 1 else f"gateway-restart{self._gateway_starts - 1}",
+                                   "gateway.app:app", self.gp)
+        self._wait_healthy(self.gp)
+
+    def kill_gateway(self) -> None:
+        """SIGKILL: no shutdown hooks, no final flush, exactly like a crash."""
+        self.gateway.kill()
+        self.gateway.wait(timeout=10)
+
+    def stop(self) -> None:
+        procs = [p for p in (self.gateway, self.provider) if p and p.poll() is None]
         for p in procs:
             p.terminate()
         for p in procs:
@@ -73,6 +100,16 @@ def services(scn: Scenario, out: Path):
                 p.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 p.kill()
+
+
+@contextmanager
+def services(scn: Scenario, out: Path):
+    """Start provider + gateway subprocesses with this scenario's models; stop them on exit."""
+    stack = Stack(scn, out).start()
+    try:
+        yield stack.urls
+    finally:
+        stack.stop()
 
 
 class RateLoad:
@@ -309,7 +346,105 @@ async def run_batch_scenario(scn: Scenario, gw_url: str, pv_url: str) -> dict:
     return rep
 
 
+async def run_recovery_scenario(scn: Scenario, out: Path) -> dict:
+    """kill -9 the gateway in the middle of a batch, start a new one, and check that nothing is lost or duplicated."""
+    if not os.environ.get("DATABASE_URL"):
+        raise SystemExit("the recovery scenario needs Postgres: docker compose up -d, then set DATABASE_URL (see .env.example)")
+    job, rng = scn.batch_job, random.Random(13)
+    stack = Stack(scn, out).start()
+    sink = create_sink(job.callback_reject_first)
+    sp = free_port()
+    server = uvicorn.Server(uvicorn.Config(sink, host="127.0.0.1", port=sp, log_level="warning"))
+    server_task = asyncio.get_running_loop().create_task(server.serve())
+    try:
+        while not server.started:
+            await asyncio.sleep(0.05)
+        gw_url, pv_url = stack.urls
+        models, weights = list(job.mix), list(job.mix.values())
+        items = [{"request_id": f"k{i}", "model": rng.choices(models, weights)[0], "estimated_tokens": job.token_size} for i in range(job.total)]
+        async with httpx.AsyncClient(base_url=gw_url, timeout=60) as gw, httpx.AsyncClient(base_url=pv_url, timeout=60) as pv:
+            await gw.post("/admin/reset")
+            await pv.post("/admin/reset")
+            t_ref = time.time()
+            t0 = time.perf_counter()
+            r = await gw.post("/v1/batches", json={"requests": items, "callback_url": f"http://127.0.0.1:{sp}/callback"})
+            ack_s = time.perf_counter() - t0
+            r.raise_for_status()
+            bid = r.json()["batch_id"]
+            final_at_kill = 0
+            while final_at_kill < job.total * job.kill_gateway_after_fraction:
+                v = (await gw.get(f"/v1/batches/{bid}")).json()
+                final_at_kill = v["total"] - sum(v["pending"].values())
+                await asyncio.sleep(0.1)
+            pre_kill = (await pv.get("/admin/audit")).json()
+            t_kill = time.time()
+            stack.kill_gateway()
+            await asyncio.sleep(1.0)  # the dead gateway stays dead for a moment
+            t_restart = time.time()
+            stack.start_gateway()
+            view, deadline = {}, time.time() + 180
+            while time.time() < deadline:
+                try:
+                    view = (await gw.get(f"/v1/batches/{bid}")).json()
+                    if view["callback"]["status"] == "delivered":
+                        break
+                except (httpx.HTTPError, KeyError):
+                    pass
+                await asyncio.sleep(0.25)
+            t_done = time.time()
+            ids, offset, states = [], 0, {}
+            while offset is not None:
+                page = (await gw.get(f"/v1/batches/{bid}/results", params={"offset": offset, "limit": 5000})).json()
+                for x in page["results"]:
+                    ids.append(x["request_id"])
+                    states[x["state"]] = states.get(x["state"], 0) + 1
+                offset = page["next_offset"]
+            post = (await pv.get("/admin/audit")).json()
+            raw = (await pv.get("/admin/audit/raw")).json()
+            res = {"series": {m: {k: np.zeros(1, dtype=np.int64) for k in SERIES} for m in scn.models},
+                   "hist": {m: np.zeros(1, dtype=np.int64) for m in scn.models},
+                   "queued": {m: 0 for m in scn.models}, "in_flight": {m: 0 for m in scn.models},
+                   "audit_req": {m: np.array(v["requests"], dtype=np.int64) for m, v in raw.items()},
+                   "audit_tok": {m: np.array(v["tokens"], dtype=np.int64) for m, v in raw.items()}}
+    finally:
+        server.should_exit = True
+        await server_task
+        stack.stop()
+    attempts = sink.state.attempts
+    delivered = [a for a in attempts if a["status_code"] == 200]
+    summary_keys = ("batch_id", "status", "total", "succeeded", "failed", "expired")
+    cb = delivered[0]["body"] if delivered else {}
+    provider_calls = sum(sum(v["counts"][o] for o in ("success", "transient_failure", "permanent_failure")) for v in post.values())
+    rep = build_report(scn, [res], [], 1, time.time() - t_ref, mode="http (gateway killed with SIGKILL mid-batch and restarted; Postgres)")
+    rep["overall"]["note"] = "gateway statistics are not collected across the crash; the checks below use the API, the callback receiver and the provider audit"
+    for m in rep["models"].values():
+        m["totals"]["unaccounted"] = 0
+    rep["batch"] = {"requests": job.total, "ack_latency_s": round(ack_s, 3), "final_when_killed": final_at_kill,
+                    "gateway_down_s": round(t_restart - t_kill, 2), "restart_to_callback_delivered_s": round(t_done - t_restart, 2),
+                    "callback_attempts": [{"at_s_after_restart": round(a["t"] - t_restart, 2), "status_code": a["status_code"]} for a in attempts],
+                    "batch_status_after_restart": view.get("status"), "request_states": states,
+                    "provider_calls_total": provider_calls, "provider_calls_before_kill": sum(sum(v["counts"][o] for o in ("success", "transient_failure", "permanent_failure")) for v in pre_kill.values()),
+                    "provider_rate_limited_total": sum(v["counts"]["rate_limited"] for v in post.values())}
+    n_ids = len(ids)
+    rep["checks"] = {
+        "acknowledged_before_the_crash": {"ok": ack_s < 1.0 and final_at_kill >= job.total * job.kill_gateway_after_fraction,
+                                          "detail": f"acked in {ack_s * 1000:.0f} ms; {final_at_kill:,} of {job.total:,} requests were final when the gateway was killed"},
+        "batch_completes_after_restart": {"ok": view.get("status") in ("completed", "completed_with_failures") and view["callback"]["status"] == "delivered",
+                                          "detail": f"status '{view.get('status')}', callback '{view.get('callback', {}).get('status')}', {t_done - t_restart:.1f}s after the restart"},
+        "callback_delivered_once": {"ok": len(delivered) == 1 and [a["status_code"] for a in attempts][-1] == 200,
+                                    "detail": f"attempt status codes {[a['status_code'] for a in attempts]}"},
+        "callback_summary_matches_batch_status": {"ok": bool(cb) and all(cb.get(k) == view.get(k) for k in summary_keys),
+                                                  "detail": f"callback {({k: cb.get(k) for k in summary_keys})} vs API {({k: view.get(k) for k in summary_keys})}"},
+        "every_request_id_exactly_once_and_none_lost": {"ok": n_ids == job.total and set(ids) == {i["request_id"] for i in items} and sum(states.values()) == job.total and not (set(states) - {"succeeded", "failed", "expired"}),
+                                                        "detail": f"{n_ids:,} result rows, {len(set(ids)):,} distinct ids, states {states}"},
+        "no_60s_window_over_limit": {"ok": rep["overall"]["all_limits_respected"], "detail": "provider audit across the whole run, including before and after the crash"},
+    }
+    return rep
+
+
 async def run_http(scn: Scenario, out: Path) -> dict:
+    if scn.kind == "recovery":
+        return await run_recovery_scenario(scn, out)
     with services(scn, out) as (gw_url, pv_url):
         if scn.batch_job:
             return await run_batch_scenario(scn, gw_url, pv_url)

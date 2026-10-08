@@ -1,0 +1,15 @@
+# Optional backing services for durability (Postgres) and multi-replica coordination (Redis).
+# Ports are offset from the defaults so they do not clash with a local install.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inference
+      POSTGRES_PASSWORD: inference
+      POSTGRES_DB: inference
+    ports: ["55432:5432"]
+    tmpfs: ["/var/lib/postgresql/data"]   # throwaway data; remove this line to keep data between restarts
+    command: ["postgres", "-c", "fsync=on", "-c", "max_connections=100"]
+  redis:
+    image: redis:7-alpine
+    ports: ["56379:6379"]

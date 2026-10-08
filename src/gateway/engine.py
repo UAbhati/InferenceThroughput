@@ -73,7 +73,7 @@ class Engine:
         self.sink.submitted(model, now, k, len(seq) - k, int(tokens.sum()))
         return k
 
-    def step(self, now: float) -> None:
+    def step(self, now: float, admit: bool = True) -> None:
         dt = 0.0 if self._credit_at is None else max(now - self._credit_at, 0.0)
         self._credit_at = now
         for model, q in self.queues.items():
@@ -81,7 +81,7 @@ class Engine:
             if q.n:
                 for c in q.expire(now - self.cfg.queue_ttl_s):
                     self.sink.expired(model, now, c[0], c[2])
-            if q.n:
+            if q.n and admit:
                 lim = self.limiters[model]
                 rem_req, _ = lim.remaining(now)
                 chunk = q.pop(min(rem_req, int(self._credit[model])))

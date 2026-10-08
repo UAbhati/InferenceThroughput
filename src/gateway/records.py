@@ -28,6 +28,7 @@ class Rec:
     t_done: float | None = None
     error: str | None = None
     batch: "Batch | None" = None
+    idx: int = 0  # position inside its batch
 
 
 @dataclass(eq=False)
@@ -65,9 +66,9 @@ class Registry:
         self.by_seq: dict[int, Rec] = {}
         self._seq = 0
 
-    def add(self, rec_id: str, model: str, tokens: int, payload: Any, now: float, batch: Batch | None = None) -> Rec:
+    def add(self, rec_id: str, model: str, tokens: int, payload: Any, now: float, batch: Batch | None = None, idx: int = 0) -> Rec:
         self._seq += 1
-        rec = Rec(rec_id, self._seq, model, tokens, payload, now, batch=batch)
+        rec = Rec(rec_id, self._seq, model, tokens, payload, now, batch=batch, idx=idx)
         self.by_id[rec_id] = rec
         self.by_seq[rec.seq] = rec
         return rec

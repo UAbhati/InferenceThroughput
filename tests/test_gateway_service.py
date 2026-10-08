@@ -44,7 +44,7 @@ class Rig:
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://gw")
 
     async def __aenter__(self):
-        self.gw.start()
+        await self.gw.start()
         return self
 
     async def __aexit__(self, *a):

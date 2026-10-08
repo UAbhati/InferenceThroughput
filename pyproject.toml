@@ -8,6 +8,7 @@ dependencies = ["fastapi", "uvicorn[standard]", "httpx", "numpy", "uvloop", "pyd
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "ruff"]
 report = ["matplotlib"]
+persistence = ["asyncpg", "redis"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
